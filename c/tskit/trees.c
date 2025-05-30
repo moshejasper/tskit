@@ -1024,6 +1024,207 @@ out:
     return ret;
 }
 
+
+/* TODO flatten the reference sets input here and follow the same pattern used
+ * in diversity, divergence, etc. */
+int TSK_WARN_UNUSED
+tsk_treeseq_genealogical_nearest_neighbours_discrim(const tsk_treeseq_t *self,
+    const tsk_id_t *focal, tsk_size_t num_focal, const tsk_id_t *const *reference_sets,
+    const tsk_size_t *reference_set_size, tsk_size_t num_reference_sets,
+    tsk_flags_t TSK_UNUSED(options), double *ret_array)
+{
+    int ret = 0;
+    tsk_id_t u, v, p;
+    tsk_size_t j;
+    /* TODO It's probably not worth bothering with the int16_t here. */
+    int16_t k, focal_reference_set;
+    /* We use the K'th element of the array for the total. */
+    const int16_t K = (int16_t)(num_reference_sets + 1);
+    tsk_size_t num_nodes = self->tables->nodes.num_rows;
+    const tsk_id_t num_edges = (tsk_id_t) self->tables->edges.num_rows;
+    const tsk_id_t *restrict I = self->tables->indexes.edge_insertion_order;
+    const tsk_id_t *restrict O = self->tables->indexes.edge_removal_order;
+    const double *restrict edge_left = self->tables->edges.left;
+    const double *restrict edge_right = self->tables->edges.right;
+    const tsk_id_t *restrict edge_parent = self->tables->edges.parent;
+    const tsk_id_t *restrict edge_child = self->tables->edges.child;
+    const double sequence_length = self->tables->sequence_length;
+    tsk_id_t tj, tk, h;
+    double left, right, *A_row, scale, tree_length;
+    tsk_id_t *restrict parent = tsk_malloc(num_nodes * sizeof(*parent));
+    double *restrict length = tsk_calloc(num_focal, sizeof(*length));
+    uint32_t *restrict ref_count
+        = tsk_calloc(((tsk_size_t) K) * num_nodes, sizeof(*ref_count));
+    int16_t *restrict reference_set_map
+        = tsk_malloc(num_nodes * sizeof(*reference_set_map));
+    uint32_t *restrict row = NULL;
+    uint32_t *restrict child_row = NULL;
+    uint32_t total, delta;
+
+    /* We support a max of 8K focal sets */
+    if (num_reference_sets == 0 || num_reference_sets > (INT16_MAX - 1)) {
+        /* TODO: more specific error */
+        ret = tsk_trace_error(TSK_ERR_BAD_PARAM_VALUE);
+        goto out;
+    }
+    if (parent == NULL || ref_count == NULL || reference_set_map == NULL
+        || length == NULL) {
+        ret = tsk_trace_error(TSK_ERR_NO_MEMORY);
+        goto out;
+    }
+
+    tsk_memset(parent, 0xff, num_nodes * sizeof(*parent));
+    tsk_memset(reference_set_map, 0xff, num_nodes * sizeof(*reference_set_map));
+    tsk_memset(ret_array, 0, num_focal * num_reference_sets * sizeof(*ret_array));
+
+    total = 0; /* keep the compiler happy */
+
+    /* Set the initial conditions and check the input. */
+    for (k = 0; k < (int16_t) num_reference_sets; k++) {
+        for (j = 0; j < reference_set_size[k]; j++) {
+            u = reference_sets[k][j];
+            if (u < 0 || u >= (tsk_id_t) num_nodes) {
+                ret = tsk_trace_error(TSK_ERR_NODE_OUT_OF_BOUNDS);
+                goto out;
+            }
+            if (reference_set_map[u] != TSK_NULL) {
+                /* FIXME Technically inaccurate here: duplicate focal not sample */
+                ret = tsk_trace_error(TSK_ERR_DUPLICATE_SAMPLE);
+                goto out;
+            }
+            reference_set_map[u] = k;
+            row = GET_2D_ROW(ref_count, K, u);
+            row[k] = 1;
+            /* Also set the count for the total among all sets */
+            row[K - 1] = 1;
+        }
+    }
+    for (j = 0; j < num_focal; j++) {
+        u = focal[j];
+        if (u < 0 || u >= (tsk_id_t) num_nodes) {
+            ret = tsk_trace_error(TSK_ERR_NODE_OUT_OF_BOUNDS);
+            goto out;
+        }
+    }
+
+    /* Iterate over the trees */
+    tj = 0;
+    tk = 0;
+    left = 0;
+    while (tj < num_edges || left < sequence_length) {
+        while (tk < num_edges && edge_right[O[tk]] == left) {
+            h = O[tk];
+            tk++;
+            u = edge_child[h];
+            v = edge_parent[h];
+            parent[u] = TSK_NULL;
+            child_row = GET_2D_ROW(ref_count, K, u);
+            while (v != TSK_NULL) {
+                row = GET_2D_ROW(ref_count, K, v);
+                for (k = 0; k < K; k++) {
+                    row[k] -= child_row[k];
+                }
+                v = parent[v];
+            }
+        }
+        while (tj < num_edges && edge_left[I[tj]] == left) {
+            h = I[tj];
+            tj++;
+            u = edge_child[h];
+            v = edge_parent[h];
+            parent[u] = v;
+            child_row = GET_2D_ROW(ref_count, K, u);
+            while (v != TSK_NULL) {
+                row = GET_2D_ROW(ref_count, K, v);
+                for (k = 0; k < K; k++) {
+                    row[k] += child_row[k];
+                }
+                v = parent[v];
+            }
+        }
+        right = sequence_length;
+        if (tj < num_edges) {
+            right = TSK_MIN(right, edge_left[I[tj]]);
+        }
+        if (tk < num_edges) {
+            right = TSK_MIN(right, edge_right[O[tk]]);
+        }
+
+        tree_length = right - left;
+        /* Process this tree */
+        for (j = 0; j < num_focal; j++) {
+            u = focal[j];
+            focal_reference_set = reference_set_map[u];
+            delta = focal_reference_set != -1;
+            p = u;
+            while (p != TSK_NULL) {
+                row = GET_2D_ROW(ref_count, K, p);
+                total = row[K - 1];
+                if (total > delta) {
+                    break;
+                }
+                p = parent[p];
+            }
+            if (p != TSK_NULL) {
+                /* Test whether more than one group is a match. Discard if so*/
+                int matchcount = 0;
+                for (k = 0; k < K - 1; k++) {
+                    if (row[k] > 0) {
+                        matchcount ++;
+                        if (matchcount > 1) {
+                            break;
+                        }
+                    }
+                }
+                if (matchcount == 1) {
+                    length[j] += tree_length;
+                    scale = tree_length / (total - delta);
+                    A_row = GET_2D_ROW(ret_array, num_reference_sets, j);
+                    for (k = 0; k < K - 1; k++) {
+                        A_row[k] += row[k] * scale;
+                    }
+                    if (focal_reference_set != -1) {
+                        /* Remove the contribution for the reference set u belongs to and
+                        * insert the correct value. The long-hand version is
+                        * A_row[k] = A_row[k] - row[k] * scale + (row[k] - 1) * scale;
+                        * which cancels to give: */
+                        A_row[focal_reference_set] -= scale;
+                    }
+                }
+
+            }
+        }
+
+        /* Move on to the next tree */
+        left = right;
+    }
+
+    /* Divide by the accumulated length for each node to normalise */
+    for (j = 0; j < num_focal; j++) {
+        A_row = GET_2D_ROW(ret_array, num_reference_sets, j);
+        if (length[j] > 0) {
+            for (k = 0; k < K - 1; k++) {
+                A_row[k] /= length[j];
+            }
+        }
+    }
+out:
+    /* Can't use msp_safe_free here because of restrict */
+    if (parent != NULL) {
+        free(parent);
+    }
+    if (ref_count != NULL) {
+        free(ref_count);
+    }
+    if (reference_set_map != NULL) {
+        free(reference_set_map);
+    }
+    if (length != NULL) {
+        free(length);
+    }
+    return ret;
+}
+
 int TSK_WARN_UNUSED
 tsk_treeseq_mean_descendants(const tsk_treeseq_t *self,
     const tsk_id_t *const *reference_sets, const tsk_size_t *reference_set_size,
