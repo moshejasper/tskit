@@ -1169,7 +1169,7 @@ tsk_treeseq_genealogical_nearest_neighbours_discrim(const tsk_treeseq_t *self,
                 /* Test whether more than one group is a match. Discard if so*/
                 int matchcount = 0;
                 for (k = 0; k < K - 1; k++) {
-                    if (row[k] > 0) {
+                    if ((row[k] > 0 && focal_reference_set != k) || (row[k] > 1)) {
                         matchcount ++;
                         if (matchcount > 1) {
                             break;
