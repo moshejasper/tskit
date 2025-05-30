@@ -8954,7 +8954,7 @@ TreeSequence_genealogical_nearest_neighbours_discrim(
     Py_BEGIN_ALLOW_THREADS err = tsk_treeseq_genealogical_nearest_neighbours_discrim(
         self->tree_sequence, PyArray_DATA(focal_array), num_focal, reference_sets,
         reference_set_size, num_reference_sets, 0, PyArray_DATA(ret_array));
-    Py_END_ALLOW_THREADS if (err != 0)ls
+    Py_END_ALLOW_THREADS if (err != 0)
     {
         handle_library_error(err);
         goto out;
