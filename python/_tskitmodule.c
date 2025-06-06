@@ -9057,7 +9057,7 @@ TreeSequence_genealogical_nearest_neighbours_advanced(
 
     Py_BEGIN_ALLOW_THREADS err = tsk_treeseq_genealogical_nearest_neighbours_advanced(
         self->tree_sequence, PyArray_DATA(focal_array), num_focal, reference_sets,
-        reference_set_size, num_reference_sets, num_neighours, 
+        reference_set_size, num_reference_sets, num_neighbours, 
         discrim, 0, PyArray_DATA(ret_array));
     Py_END_ALLOW_THREADS if (err != 0)
     {
