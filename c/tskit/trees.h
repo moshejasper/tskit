@@ -975,6 +975,11 @@ int tsk_treeseq_genealogical_nearest_neighbours_discrim(const tsk_treeseq_t *sel
     const tsk_id_t *focal, tsk_size_t num_focal, const tsk_id_t *const *reference_sets,
     const tsk_size_t *reference_set_size, tsk_size_t num_reference_sets,
     tsk_flags_t options, double *ret_array);
+int tsk_treeseq_genealogical_nearest_neighbours_advanced(const tsk_treeseq_t *self,
+    const tsk_id_t *focal, tsk_size_t num_focal, const tsk_id_t *const *reference_sets,
+    const tsk_size_t *reference_set_size, tsk_size_t num_reference_sets,
+    const uint32_t num_neighbours, const bool discrim,
+    tsk_flags_t options, double *ret_array);
 int tsk_treeseq_mean_descendants(const tsk_treeseq_t *self,
     const tsk_id_t *const *reference_sets, const tsk_size_t *reference_set_size,
     tsk_size_t num_reference_sets, tsk_flags_t options, double *ret_array);
