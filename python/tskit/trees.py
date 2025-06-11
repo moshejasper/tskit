@@ -920,10 +920,10 @@ class Tree:
         ``sample_sets`` need not include all samples but must be pairwise disjoint.
 
         The returned object is a :class:`tskit.TopologyCounter` that contains
-        counts of topologies per combination of sample sets. For example,
+        counts of topologies per combination of sample sets. For example::
 
-        >>> topology_counter = tree.count_topologies()
-        >>> rank, count = topology_counter[0, 1, 2].most_common(1)[0]
+            topology_counter = tree.count_topologies()
+            rank, count = topology_counter[0, 1, 2].most_common(1)[0]
 
         produces the most common tree topology, with populations 0, 1
         and 2 as its tips, according to the genealogies of those
@@ -941,8 +941,8 @@ class Tree:
         To convert the topology counts to probabilities, divide by the total
         possible number of sample combinations from the sample sets in question::
 
-            >>> set_sizes = [len(sample_set) for sample_set in sample_sets]
-            >>> p = count / (set_sizes[0] * set_sizes[1] * set_sizes[2])
+            set_sizes = [len(sample_set) for sample_set in sample_sets]
+            p = count / (set_sizes[0] * set_sizes[1] * set_sizes[2])
 
         .. warning:: The interface for this method is preliminary and may be subject to
             backwards incompatible changes in the near future.
@@ -968,9 +968,9 @@ class Tree:
     def branch_length(self, u):
         """
         Returns the length of the branch (in units of time) joining the
-        specified node to its parent. This is equivalent to
+        specified node to its parent. This is equivalent to::
 
-        >>> tree.time(tree.parent(u)) - tree.time(u)
+            tree.time(tree.parent(u)) - tree.time(u)
 
         The branch length for a node that has no parent (e.g., a root) is
         defined as zero.
@@ -996,9 +996,9 @@ class Tree:
     def total_branch_length(self):
         """
         Returns the sum of all the branch lengths in this tree (in
-        units of time). This is equivalent to
+        units of time). This is equivalent to::
 
-        >>> sum(tree.branch_length(u) for u in tree.nodes())
+            sum(tree.branch_length(u) for u in tree.nodes())
 
         Note that the branch lengths for root nodes are defined as zero.
 
@@ -1047,7 +1047,7 @@ class Tree:
         Returns the time of the most recent common ancestor of the specified
         nodes. This is equivalent to::
 
-            >>> tree.time(tree.mrca(*args))
+            tree.time(tree.mrca(*args))
 
         .. note::
             If you are using this method to calculate average tmrca values along the
@@ -1889,7 +1889,8 @@ class Tree:
             0.3.6)
         :param node_labels: If specified, show custom labels for the nodes
             (specified by ID) that are present in this map; any nodes not present will
-            not have a label.
+            not have a label. To use a metadata key, for example, use
+            ``node_labels={node.id: node.metadata["key"] for node in ts.nodes()}``.
         :type node_labels: dict(int, str)
         :param mutation_labels: If specified, show custom labels for the
             mutations (specified by ID) that are present in the map; any mutations
@@ -1964,7 +1965,7 @@ class Tree:
         :return: An SVG representation of a tree.
         :rtype: SVGString
         """
-        draw = drawing.SvgTree(
+        svgtree = drawing.SvgTree(
             self,
             size,
             time_scale=time_scale,
@@ -1995,11 +1996,7 @@ class Tree:
             preamble=preamble,
             **kwargs,
         )
-        output = draw.drawing.tostring()
-        if path is not None:
-            # TODO: removed the pretty here when this is stable.
-            draw.drawing.saveas(path, pretty=True)
-        return drawing.SVGString(output)
+        return svgtree.draw(path)
 
     def draw(
         self,
@@ -2026,13 +2023,13 @@ class Tree:
         When working in a Jupyter notebook, use the ``IPython.display.SVG``
         function to display the SVG output from this function inline in the notebook::
 
-            >>> SVG(tree.draw())
+            SVG(tree.draw())
 
         The unicode format uses unicode `box drawing characters
         <https://en.wikipedia.org/wiki/Box-drawing_character>`_ to render the tree.
         This allows rendered trees to be printed out to the terminal::
 
-            >>> print(tree.draw(format="unicode"))
+            print(tree.draw(format="unicode"))
               6
             ┏━┻━┓
             ┃   5
@@ -2044,7 +2041,7 @@ class Tree:
         The ``node_labels`` argument allows the user to specify custom labels
         for nodes, or no labels at all::
 
-            >>> print(tree.draw(format="unicode", node_labels={}))
+            print(tree.draw(format="unicode", node_labels={}))
               ┃
             ┏━┻━┓
             ┃   ┃
@@ -2205,9 +2202,9 @@ class Tree:
         The returned iterator is equivalent to iterating over all sites
         and all mutations in each site, i.e.::
 
-            >>> for site in tree.sites():
-            >>>     for mutation in site.mutations:
-            >>>         yield mutation
+            for site in tree.sites():
+                for mutation in site.mutations:
+                    yield mutation
 
         :return: An iterator over all :class:`Mutation` objects in this tree.
         :rtype: iter(:class:`Mutation`)
@@ -2790,10 +2787,10 @@ class Tree:
 
         For example::
 
-            >>> import networkx as nx
-            >>> nx.DiGraph(tree.as_dict_of_dicts())
-            >>> # undirected graphs work as well
-            >>> nx.Graph(tree.as_dict_of_dicts())
+            import networkx as nx
+            nx.DiGraph(tree.as_dict_of_dicts())
+            # undirected graphs work as well
+            nx.Graph(tree.as_dict_of_dicts())
 
         :return: Dictionary of dictionaries of dictionaries where the first key
             is the source, the second key is the target of an edge, and the
@@ -4987,9 +4984,9 @@ class TreeSequence:
         The returned iterator is equivalent to iterating over all sites
         and all mutations in each site, i.e.::
 
-            >>> for site in tree_sequence.sites():
-            >>>     for mutation in site.mutations:
-            >>>         yield mutation
+            for site in tree_sequence.sites():
+                for mutation in site.mutations:
+                    yield mutation
 
         :return: An iterator over all mutations in this tree sequence.
         :rtype: iter(:class:`Mutation`)
@@ -5020,9 +5017,9 @@ class TreeSequence:
     def breakpoints(self, as_array=False):
         """
         Returns the breakpoints that separate trees along the chromosome, including the
-        two extreme points 0 and L. This is equivalent to
+        two extreme points 0 and L. This is equivalent to::
 
-        >>> iter([0] + [t.interval.right for t in self.trees()])
+            iter([0] + [t.interval.right for t in self.trees()])
 
         By default we return an iterator over the breakpoints as Python float objects;
         if ``as_array`` is True we return them as a numpy array.
@@ -7106,7 +7103,7 @@ class TreeSequence:
     ):
         r"""
         Concatenate a set of tree sequences to the right of this one, by repeatedly
-        calling {meth}`union` with an (optional)
+        calling :meth:`~TreeSequence.union` with an (optional)
         node mapping for each of the ``others``. If any node mapping is ``None``
         only map the sample nodes between the input tree sequence and this one,
         based on the numerical order of sample node IDs.
@@ -7120,14 +7117,14 @@ class TreeSequence:
         :param Union[list, None] node_mappings: An list of node mappings for each
             input tree sequence in ``args``. Each should either be an array of
             integers of the same length as the number of nodes in the equivalent
-            input tree sequence (see :meth:`union` for details), or ``None``.
-            If ``None``, only sample nodes are mapped to each other.
+            input tree sequence (see :meth:`~TreeSequence.union` for details), or
+            ``None``. If ``None``, only sample nodes are mapped to each other.
             Default: ``None``, treated as ``[None] * len(args)``.
         :param bool record_provenance: If True (default), record details of this
             call to ``concatenate`` in the returned tree sequence's provenance
             information (Default: True).
         :param bool add_populations: If True (default), nodes new to ``self`` will
-            be assigned new population IDs (see :meth:`union`)
+            be assigned new population IDs (see :meth:`~TreeSequence.union`)
         """
         if node_mappings is None:
             node_mappings = [None] * len(args)
@@ -7555,9 +7552,11 @@ class TreeSequence:
             draws a box, labelled with the name, on the X axis between the left and
             right positions, and can be used for annotating genomic regions (e.g.
             genes) on the X axis. If ``None`` (default) do not plot any regions.
-        :param bool y_axis: Should the plot have an Y axis line, showing time (or
-            ranked node time if ``time_scale="rank"``. If ``None`` (default)
-            do not plot a Y axis.
+        :param Union[bool, str] y_axis: Should the plot have an Y axis line, showing
+            time. If ``False`` do not plot a Y axis. If ``True``, plot the Y axis on
+            left hand side of the plot. Can also take the strings ``"left"`` or
+            ``"right"``, specifying the side of the plot on which to plot the Y axis.
+            Default: ``None``, treated as ``False``.
         :param str y_label: Place a label to the left of the plot. If ``None`` (default)
             and there is a Y axis, create and place an appropriate label.
         :param Union[list, dict] y_ticks: A list of Y values at which to plot
@@ -7599,7 +7598,7 @@ class TreeSequence:
             strictly within an empty region then that tree will not be plotted on the
             right hand side, and the X axis will end at ``empty_tree.interval.left``
         """
-        draw = drawing.SvgTreeSequence(
+        svgtreesequence = drawing.SvgTreeSequence(
             self,
             size,
             x_scale=x_scale,
@@ -7629,11 +7628,7 @@ class TreeSequence:
             preamble=preamble,
             **kwargs,
         )
-        output = draw.drawing.tostring()
-        if path is not None:
-            # TODO remove the 'pretty' when we are done debugging this.
-            draw.drawing.saveas(path, pretty=True)
-        return drawing.SVGString(output)
+        return svgtreesequence.draw(path)
 
     def draw_text(
         self,

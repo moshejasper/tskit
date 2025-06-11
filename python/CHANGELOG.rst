@@ -7,11 +7,22 @@
 - ``TreeSequence.map_to_vcf_model`` now also returns the transformed positions and
   contig length. (:user:`benjeffery`, :pr:`3174`, :issue:`3173`)
 
+- ``draw_svg()`` methods now associate tree branches with edge IDs
+  (:user:`hyanwong`, :pr:`3193`, :issue:`557`)
+
+- ``draw_svg()`` methods now allow the y-axis to be placed on the right-hand side
+  using ``y_axis="right"`` (:user:`hyanwong`, :pr:`3201`)
+
 **Bugfixes**
 
 - Fix bug in ``TreeSequence.pair_coalescence_counts`` when ``span_normalise=True``
   and a window breakpoint falls within an internal missing interval.
   (:user:`nspope`, :pr:`3176`, :issue:`3175`)
+
+**Breaking changes** 
+
+- ``ltrim``, ``rtrim``, ``trim`` and ``shift`` raise an error if used on a tree sequence
+  containing a reference sequence (:user:`hyanwong`, :pr:`3210`, :issue:`2091`)
 
 --------------------
 [0.6.4] - 2025-05-21
