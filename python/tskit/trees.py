@@ -4137,6 +4137,9 @@ class TreeSequence:
         self._individuals_population = None
         self._individuals_location = None
         self._individuals_nodes = None
+        self._mutations_edge = None
+        self._sites_ancestral_state = None
+        self._mutations_derived_state = None
         # NOTE: when we've implemented read-only access via the underlying
         # tables we can replace these arrays with reference to the read-only
         # tables here (and remove the low-level boilerplate).
@@ -5952,6 +5955,20 @@ class TreeSequence:
         return self._sites_position
 
     @property
+    def sites_ancestral_state(self):
+        """
+        The ``ancestral_state`` column in the
+        :ref:`sec_site_table_definition` as a numpy array (dtype=StringDtype).
+        """
+        if not _tskit.HAS_NUMPY_2:
+            raise RuntimeError(
+                "The sites_ancestral_state property requires numpy 2.0 or later."
+            )
+        if self._sites_ancestral_state is None:
+            self._sites_ancestral_state = self._ll_tree_sequence.sites_ancestral_state
+        return self._sites_ancestral_state
+
+    @property
     def sites_metadata(self):
         """
         Efficient access to the ``metadata`` column in the
@@ -6009,6 +6026,22 @@ class TreeSequence:
         return self._mutations_time
 
     @property
+    def mutations_derived_state(self):
+        """
+        Access to the ``derived_state`` column in the
+        :ref:`sec_mutation_table_definition` as a numpy array (dtype=StringDtype).
+        """
+        if not _tskit.HAS_NUMPY_2:
+            raise RuntimeError(
+                "The mutations_derived_state property requires numpy 2.0 or later."
+            )
+        if self._mutations_derived_state is None:
+            self._mutations_derived_state = (
+                self._ll_tree_sequence.mutations_derived_state
+            )
+        return self._mutations_derived_state
+
+    @property
     def mutations_metadata(self):
         """
         Efficient access to the ``metadata`` column in the
@@ -6020,6 +6053,18 @@ class TreeSequence:
         return self.table_metadata_schemas.mutation.structured_array_from_buffer(
             self._mutations_metadata
         )
+
+    @property
+    def mutations_edge(self):
+        """
+        Return an array of the ID of the edge each mutation sits on in the tree sequence.
+
+        :return: Array of shape (num_mutations,) containing edge IDs.
+        :rtype: numpy.ndarray (dtype=np.int32)
+        """
+        if self._mutations_edge is None:
+            self._mutations_edge = self._ll_tree_sequence.get_mutations_edge()
+        return self._mutations_edge
 
     @property
     def migrations_left(self):
