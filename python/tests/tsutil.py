@@ -79,7 +79,7 @@ def subsample_sites(ts, num_sites):
     return t.tree_sequence()
 
 
-def insert_branch_mutations(ts, mutations_per_branch=1):
+def insert_branch_mutations(ts, mutations_per_branch=1, num_states=2):
     """
     Returns a copy of the specified tree sequence with a mutation on every branch
     in every tree.
@@ -102,7 +102,7 @@ def insert_branch_mutations(ts, mutations_per_branch=1):
                 state[u] = state[v]
                 parent = mutation[v]
                 for _ in range(mutations_per_branch):
-                    state[u] = (state[u] + 1) % 2
+                    state[u] = (state[u] + 1) % num_states
                     metadata = f"{len(tables.mutations)}".encode()
                     mutation[u] = tables.mutations.add_row(
                         site=site,
@@ -117,7 +117,7 @@ def insert_branch_mutations(ts, mutations_per_branch=1):
 
 
 def remove_mutation_times(ts):
-    tables = ts.tables
+    tables = ts.dump_tables()
     tables.mutations.time = np.full_like(tables.mutations.time, tskit.UNKNOWN_TIME)
     return tables.tree_sequence()
 
@@ -128,7 +128,7 @@ def insert_discrete_time_mutations(ts, num_times=4, num_sites=10):
     positions, at only a discrete set of times (the same for all trees): at
     num_times times evenly spaced between 0 and the maximum time.
     """
-    tables = ts.tables
+    tables = ts.dump_tables()
     tables.sites.clear()
     tables.mutations.clear()
     height = max(t.time(t.roots[0]) for t in ts.trees())
@@ -954,35 +954,28 @@ def cmp_site(i, j, tables):
     return ret
 
 
-def cmp_mutation_canonical(i, j, tables, site_order, num_descendants=None):
+def cmp_mutation(i, j, tables, site_order, num_descendants=None):
     site_i = tables.mutations.site[i]
     site_j = tables.mutations.site[j]
     ret = site_order[site_i] - site_order[site_j]
+    # Within a particular site sort by time if known, then node time fallback
     if (
         ret == 0
         and (not tskit.is_unknown_time(tables.mutations.time[i]))
         and (not tskit.is_unknown_time(tables.mutations.time[j]))
     ):
         ret = tables.mutations.time[j] - tables.mutations.time[i]
+    if ret == 0:
+        # Use node times as fallback when mutation times are unknown or equal
+        node_time_i = tables.nodes.time[tables.mutations.node[i]]
+        node_time_j = tables.nodes.time[tables.mutations.node[j]]
+        ret = node_time_j - node_time_i
     if ret == 0:
         ret = num_descendants[j] - num_descendants[i]
+    # Tiebreaker: node
     if ret == 0:
         ret = tables.mutations.node[i] - tables.mutations.node[j]
-    if ret == 0:
-        ret = i - j
-    return ret
-
-
-def cmp_mutation(i, j, tables, site_order):
-    site_i = tables.mutations.site[i]
-    site_j = tables.mutations.site[j]
-    ret = site_order[site_i] - site_order[site_j]
-    if (
-        ret == 0
-        and (not tskit.is_unknown_time(tables.mutations.time[i]))
-        and (not tskit.is_unknown_time(tables.mutations.time[j]))
-    ):
-        ret = tables.mutations.time[j] - tables.mutations.time[i]
+    # Final tiebreaker: ID
     if ret == 0:
         ret = i - j
     return ret
@@ -1107,26 +1100,17 @@ def py_sort(tables, canonical=False):
     sorted_sites = sorted(range(copy.sites.num_rows), key=site_key)
     site_id_map = {k: j for j, k in enumerate(sorted_sites)}
     site_order = np.argsort(sorted_sites)
-    if canonical:
-        mut_num_descendants = compute_mutation_num_descendants(copy)
-        mut_key = functools.cmp_to_key(
-            lambda a, b: cmp_mutation_canonical(
-                a,
-                b,
-                tables=copy,
-                site_order=site_order,
-                num_descendants=mut_num_descendants,
-            )
+    # Canonical sort, and regular sort are the same for mutations
+    mut_num_descendants = compute_mutation_num_descendants(copy)
+    mut_key = functools.cmp_to_key(
+        lambda a, b: cmp_mutation(
+            a,
+            b,
+            tables=copy,
+            site_order=site_order,
+            num_descendants=mut_num_descendants,
         )
-    else:
-        mut_key = functools.cmp_to_key(
-            lambda a, b: cmp_mutation(
-                a,
-                b,
-                tables=copy,
-                site_order=site_order,
-            )
-        )
+    )
     sorted_muts = sorted(range(copy.mutations.num_rows), key=mut_key)
     mut_id_map = {k: j for j, k in enumerate(sorted_muts)}
     mut_id_map[tskit.NULL] = tskit.NULL
@@ -1737,7 +1721,7 @@ class EdgeRange:
     order: typing.List
 
 
-class TreePosition:
+class TreeIndexes:
     def __init__(self, ts):
         self.ts = ts
         self.index = -1

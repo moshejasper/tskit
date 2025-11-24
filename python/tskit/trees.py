@@ -370,7 +370,11 @@ class Site(util.Dataclass):
     mutations: np.ndarray
     """
     The list of mutations at this site. Mutations within a site are returned in the
-    order they are specified in the underlying :class:`MutationTable`.
+
+    order they are specified in the underlying :class:`MutationTable`. For canonical
+    (i.e., valid) tables, this means ancestral mutations precede their descendants, so
+    older mutations (as defined by the canonical mutation ordering; see
+    :ref:`sec_mutation_requirements`) appear before younger ones.
     """
     metadata: bytes | dict | None
     """
@@ -425,6 +429,7 @@ class Mutation(util.Dataclass):
         "metadata",
         "time",
         "edge",
+        "inherited_state",
     ]
     id: int  # noqa A003
     """
@@ -473,6 +478,13 @@ class Mutation(util.Dataclass):
     """
     The ID of the edge that this mutation is on.
     """
+    inherited_state: str
+    """
+    The inherited state for this mutation. This is the state that existed at the site
+    before this mutation occurred. This is either the ancestral state of the site
+    (if the mutation has no parent) or the derived state of the mutation's
+    parent mutation (if it has a parent).
+    """
 
     # To get default values on slots we define a custom init
     def __init__(
@@ -485,6 +497,7 @@ class Mutation(util.Dataclass):
         parent=NULL,
         metadata=b"",
         edge=NULL,
+        inherited_state=None,
     ):
         self.id = id
         self.site = site
@@ -494,6 +507,7 @@ class Mutation(util.Dataclass):
         self.parent = parent
         self.metadata = metadata
         self.edge = edge
+        self.inherited_state = inherited_state
 
     # We need a custom eq to compare unknown times.
     def __eq__(self, other):
@@ -561,8 +575,8 @@ class Migration(util.Dataclass):
     """
     id: int  # noqa A003
     """
-    The integer ID of this mutation. Varies from 0 to
-    :attr:`TreeSequence.num_mutations` - 1.
+    The integer ID of this migration. Varies from 0 to
+    :attr:`TreeSequence.num_migrations` - 1.
     """
 
 
@@ -760,7 +774,7 @@ class Tree:
         calling the :meth:`TreeSequence.trees` iterator.
 
         :return: The root threshold.
-        :rtype: :class:`TreeSequence`
+        :rtype: int
         """
         return self._ll_tree.get_root_threshold()
 
@@ -840,7 +854,7 @@ class Tree:
         """
         self._ll_tree.clear()
 
-    def seek_index(self, index):
+    def seek_index(self, index, skip=None):
         """
         Sets the state to represent the tree at the specified
         index in the parent tree sequence. Negative indexes following the
@@ -857,9 +871,10 @@ class Tree:
             index += num_trees
         if index < 0 or index >= num_trees:
             raise IndexError("Index out of bounds")
-        self._ll_tree.seek_index(index)
+        skip = False if skip is None else skip
+        self._ll_tree.seek_index(index, skip)
 
-    def seek(self, position):
+    def seek(self, position, skip=None):
         """
         Sets the state to represent the tree that covers the specified
         position in the parent tree sequence. After a successful return
@@ -870,12 +885,14 @@ class Tree:
 
         :param float position: The position along the sequence length to
             seek to.
-        :raises ValueError: If 0 < position or position >=
+        :raises ValueError: If ``position`` is less than 0 or ``position`` is greater
+            than or equal to
             :attr:`TreeSequence.sequence_length`.
         """
         if position < 0 or position >= self.tree_sequence.sequence_length:
             raise ValueError("Position out of bounds")
-        self._ll_tree.seek(position)
+        skip = False if skip is None else skip
+        self._ll_tree.seek(position, skip)
 
     def rank(self) -> tskit.Rank:
         """
@@ -906,7 +923,7 @@ class Tree:
             the interval :math:`[0, \\text{span})` and the :attr:`~Tree.tree_sequence`
             from which the tree is taken will have its
             :attr:`~tskit.TreeSequence.sequence_length` equal to ``span``.
-        :param: float branch_length: The minimum length of a branch in this tree.
+        :param float branch_length: The minimum length of a branch in this tree.
         :raises ValueError: If the given rank is out of bounds for trees
             with ``num_leaves`` leaves.
         """
@@ -3581,7 +3598,7 @@ def parse_nodes(source, strict=True, encoding="utf8", base64_metadata=True, tabl
     return table
 
 
-def parse_edges(source, strict=True, table=None):
+def parse_edges(source, strict=True, table=None, encoding="utf8", base64_metadata=True):
     """
     Parse the specified file-like object containing a whitespace delimited
     description of a edge table and returns the corresponding :class:`EdgeTable`
@@ -3597,6 +3614,9 @@ def parse_edges(source, strict=True, table=None):
         False, a relaxed whitespace splitting algorithm is used.
     :param EdgeTable table: If specified, write the edges into this table. If
         not, create a new :class:`EdgeTable` instance and return.
+    :param str encoding: Encoding used for text representation.
+    :param bool base64_metadata: If True, metadata is encoded using Base64
+        encoding; otherwise, as plain text.
     """
     sep = None
     if strict:
@@ -3608,6 +3628,12 @@ def parse_edges(source, strict=True, table=None):
     right_index = header.index("right")
     parent_index = header.index("parent")
     children_index = header.index("child")
+    metadata_index = None
+    try:
+        metadata_index = header.index("metadata")
+    except ValueError:
+        pass
+    default_metadata = b""
     for line in source:
         tokens = line.rstrip("\n").split(sep)
         if len(tokens) >= 4:
@@ -3615,8 +3641,19 @@ def parse_edges(source, strict=True, table=None):
             right = float(tokens[right_index])
             parent = int(tokens[parent_index])
             children = tuple(map(int, tokens[children_index].split(",")))
+            metadata = default_metadata
+            if metadata_index is not None and metadata_index < len(tokens):
+                metadata = tokens[metadata_index].encode(encoding)
+                if base64_metadata:
+                    metadata = base64.b64decode(metadata)
             for child in children:
-                table.add_row(left=left, right=right, parent=parent, child=child)
+                table.add_row(
+                    left=left,
+                    right=right,
+                    parent=parent,
+                    child=child,
+                    metadata=metadata,
+                )
     return table
 
 
@@ -4124,6 +4161,7 @@ class TreeSequence:
 
     def __init__(self, ll_tree_sequence):
         self._ll_tree_sequence = ll_tree_sequence
+        self._immutable_tables = None
         metadata_schema_strings = self._ll_tree_sequence.get_table_metadata_schemas()
         metadata_schema_instances = {
             name: metadata_module.parse_metadata_schema(
@@ -4138,6 +4176,7 @@ class TreeSequence:
         self._individuals_location = None
         self._individuals_nodes = None
         self._mutations_edge = None
+        self._mutations_inherited_state = None
         self._sites_ancestral_state = None
         self._mutations_derived_state = None
         # NOTE: when we've implemented read-only access via the underlying
@@ -4308,21 +4347,29 @@ class TreeSequence:
     @property
     def tables(self):
         """
-        Returns the :class:`tables<TableCollection>` underlying this tree
-        sequence, intended for read-only access. See :meth:`.dump_tables` if you wish
-        to modify the tables.
+        Returns an immutable view of the tables underlying this tree sequence.
 
-        .. warning:: This property currently returns a copy of the tables
-            underlying a tree sequence but it may return a read-only
-            **view** in the future. Thus, if the tables will subsequently be
-            updated, please use the :meth:`.dump_tables` method instead as
-            this will always return a new copy of the TableCollection.
+        This view shares the same data as the TreeSequence (zero-copy).
+        Use :meth:`.dump_tables` for a modifiable copy.
 
-        :return: A :class:`TableCollection` containing all a copy of the
-            tables underlying this tree sequence.
-        :rtype: TableCollection
+        Note that if tskit was built with Numpy 1, this method acts as
+        :meth:`.dump_tables` and returns a mutable TableCollection.
+
+        :return: An immutable view of the TableCollection underlying this tree sequence.
         """
-        return self.dump_tables()
+        if not _tskit.HAS_NUMPY_2:
+            warnings.warn(
+                "Immutable table views require tskit to be built against NumPy 2.0 or "
+                "newer. Falling back to returning a mutable TableCollection.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return self.dump_tables()
+        if self._immutable_tables is None:
+            self._immutable_tables = tables.ImmutableTableCollection(
+                self._ll_tree_sequence
+            )
+        return self._immutable_tables
 
     @property
     def nbytes(self):
@@ -4745,7 +4792,8 @@ class TreeSequence:
         Returns an iterable sequence of all the :ref:`nodes <sec_node_table_definition>`
         in this tree sequence.
 
-        .. note:: Although node ids are commonly ordered by node time, this is not a
+        .. note::
+            Although node ids are commonly ordered by node time, this is not a
             formal tree sequence requirement. If you wish to iterate over nodes in
             time order, you should therefore use ``order="timeasc"`` (and wrap the
             resulting sequence in the standard Python :func:`python:reversed` function
@@ -5299,13 +5347,13 @@ class TreeSequence:
         Returns an iterator over the strings of haplotypes that result from
         the trees and mutations in this tree sequence. Each haplotype string
         is guaranteed to be of the same length. A tree sequence with
-        :math:`n` samples and with :math:`s` sites lying between ``left`` and
-        ``right`` will return a total of :math:`n`
-        strings of :math:`s` alleles concatenated together, where an allele
+        :math:`n` requested nodes (default: the number of sample nodes) and with
+        :math:`s` sites lying between ``left`` and ``right`` will return a total
+        of :math:`n` strings of :math:`s` alleles concatenated together, where an allele
         consists of a single ascii character (tree sequences that include alleles
         which are not a single character in length, or where the character is
         non-ascii, will raise an error). The first string returned is the
-        haplotype for the first requested sample, and so on.
+        haplotype for the first requested node, and so on.
 
         The alleles at each site must be represented by single byte characters,
         (i.e., variants must be single nucleotide polymorphisms, or SNPs), hence
@@ -5314,8 +5362,8 @@ class TreeSequence:
         haplotype ``h``, the value of ``h[j]`` will therefore be the observed
         allelic state at site ``j``.
 
-        If ``isolated_as_missing`` is True (the default), isolated samples without
-        mutations directly above them will be treated as
+        If ``isolated_as_missing`` is True (the default), isolated nodes without
+        mutations directly above them (whether samples or non-samples) will be treated as
         :ref:`missing data<sec_data_model_missing_data>` and will be
         represented in the string by the ``missing_data_character``. If
         instead it is set to False, missing data will be assigned the ancestral state
@@ -5324,8 +5372,10 @@ class TreeSequence:
         behaviour in versions prior to 0.2.0. Prior to 0.3.0 the `impute_missing_data`
         argument controlled this behaviour.
 
+        It is also possible to provide **non-sample** nodes via the ``samples``
+        argument if you wish to output haplotypes for (e.g.) internal nodes.
         See also the :meth:`.variants` iterator for site-centric access
-        to sample genotypes.
+        to genotypes for the requested nodes.
 
         .. warning::
             For large datasets, this method can consume a **very large** amount of
@@ -5343,9 +5393,10 @@ class TreeSequence:
             be used to represent missing data.
             If any normal allele contains this character, an error is raised.
             Default: 'N'.
-        :param list[int] samples: The samples for which to output haplotypes. If
-            ``None`` (default), return haplotypes for all the samples in the tree
-            sequence, in the order given by the :meth:`.samples` method.
+        :param list[int] samples: The node IDs for which to output haplotypes. If
+            ``None`` (default), return haplotypes for all the sample nodes in the tree
+            sequence, in the order given by the :meth:`.samples` method. Non-sample
+            nodes may also be provided.
         :param int left: Haplotype strings will start with the first site at or after
             this genomic position. If ``None`` (default) start at the first site.
         :param int right: Haplotype strings will end with the last site before this
@@ -5416,9 +5467,13 @@ class TreeSequence:
         generated; output order of genotypes in the returned variants
         corresponds to the order of the samples in this list. It is also
         possible to provide **non-sample** nodes as an argument here, if you
-        wish to generate genotypes for (e.g.) internal nodes. However,
-        ``isolated_as_missing`` must be False in this case, as it is not
-        possible to detect missing data for non-sample nodes.
+        wish to generate genotypes for (e.g.) internal nodes. Missingness is
+        detected for any requested node (sample or non-sample) when
+        ``isolated_as_missing`` is True: if a node is isolated at a site (i.e.,
+        has no parent and no children in the marginal tree) and has no mutation
+        above it at that site, its genotype will be reported as
+        :data:`MISSING_DATA` (-1). If ``isolated_as_missing`` is False, such
+        nodes are assigned the site's ancestral allele index.
 
         If isolated samples are present at a given site without mutations above them,
         they are interpreted by default as
@@ -5508,19 +5563,23 @@ class TreeSequence:
         """
         Returns an :math:`m \\times n` numpy array of the genotypes in this
         tree sequence, where :math:`m` is the number of sites and :math:`n`
-        the number of samples. The genotypes are the indexes into the array
-        of ``alleles``, as described for the :class:`Variant` class.
+        is the number of requested nodes (default: the number of sample nodes).
+        The genotypes are the indexes into the array of ``alleles``, as
+        described for the :class:`Variant` class.
 
-        If isolated samples are present at a given site without mutations above them,
-        they will be interpreted as :ref:`missing data<sec_data_model_missing_data>`
-        the genotypes array will contain a special value :data:`MISSING_DATA`
-        (-1) to identify these missing samples.
+        It is possible to provide **non-sample** nodes via the ``samples``
+        argument if you wish to generate genotypes for (e.g.) internal nodes.
+        Missingness is detected for any requested node (sample or non-sample)
+        when ``isolated_as_missing`` is True: if a node is isolated at a site
+        (i.e., has no parent and no children in the marginal tree) and has no
+        mutation above it at that site, its genotype will be reported as
+        :data:`MISSING_DATA` (-1).
 
-        Such samples are treated as missing data by default, but if
-        ``isolated_as_missing`` is set to to False, they will not be treated as missing,
-        and so assigned the ancestral state. This was the default behaviour in
-        versions prior to 0.2.0. Prior to 0.3.0 the `impute_missing_data`
-        argument controlled this behaviour.
+        Such nodes are treated as missing data by default. If
+        ``isolated_as_missing`` is set to False, they will not be treated as
+        missing, and will instead be assigned the ancestral state. This was the
+        default behaviour in versions prior to 0.2.0. Prior to 0.3.0 the
+        ``impute_missing_data`` argument controlled this behaviour.
 
         .. warning::
             This method can consume a **very large** amount of memory! If
@@ -5528,10 +5587,12 @@ class TreeSequence:
             access them sequentially using the :meth:`.variants` iterator.
 
         :param array_like samples: An array of node IDs for which to generate
-            genotypes, or None for all sample nodes. Default: None.
+            genotypes. If ``None`` (default), generate genotypes for all sample
+            nodes. Non-sample nodes may also be provided, in which case genotypes
+            will be generated for those nodes too.
         :param bool isolated_as_missing: If True, the genotype value assigned to
-            missing samples (i.e., isolated samples without mutations) is
-            :data:`.MISSING_DATA` (-1). If False, missing samples will be
+            isolated nodes without mutations (samples or non-samples) is
+            :data:`.MISSING_DATA` (-1). If False, such nodes will be
             assigned the allele index for the ancestral state.
             Default: True.
         :param tuple alleles: A tuple of strings describing the encoding of
@@ -5580,6 +5641,7 @@ class TreeSequence:
         *,
         reference_sequence=None,
         missing_data_character=None,
+        isolated_as_missing=None,
         samples=None,
         left=None,
         right=None,
@@ -5594,7 +5656,8 @@ class TreeSequence:
         By default ``L`` is therefore equal to the :attr:`.sequence_length`,
         and ``a[j]`` is the nucleotide value at genomic position ``j``.
 
-        .. note:: This is inherently a **zero-based** representation of the sequence
+        .. note::
+            This is inherently a **zero-based** representation of the sequence
             coordinate space. Care will be needed when interacting with other
             libraries and upstream coordinate spaces.
 
@@ -5643,25 +5706,36 @@ class TreeSequence:
            single byte characters, (i.e., variants must be single nucleotide
            polymorphisms, or SNPs).
 
-        .. warning:: :ref:`Missing data<sec_data_model_missing_data>` is not
-           currently supported by this method and it will raise a ValueError
-           if called on tree sequences containing isolated samples.
-           See https://github.com/tskit-dev/tskit/issues/1896 for more
-           information.
+        Missing data handling
+
+        - If ``isolated_as_missing=True`` (default), nodes that are isolated
+          (no parent and no children) are rendered as the missing character across
+          each tree interval. At site positions, the per-site allele overrides the
+          missing character; if a genotype is missing (``-1``), the missing
+          character is retained.
+        - If ``isolated_as_missing=False``, no missing overlay is applied. At sites,
+          genotypes are decoded as usual; at non-sites, bases come from the
+          reference sequence.
 
         See also the :meth:`.variants` iterator for site-centric access
         to sample genotypes and :meth:`.haplotypes` for access to sample sequences
         at just the sites in the tree sequence.
 
         :param str reference_sequence: The reference sequence to fill in
-            gaps between sites in the alignments.
+            gaps between sites in the alignments. If provided, it must be a
+            string of length equal to :attr:`.sequence_length`; the sequence is
+            sliced internally to the requested ``[left, right)`` interval.
         :param str missing_data_character: A single ascii character that will
             be used to represent missing data.
             If any normal allele contains this character, an error is raised.
             Default: 'N'.
-        :param list[int] samples: The samples for which to output alignments. If
-            ``None`` (default), return alignments for all the samples in the tree
-            sequence, in the order given by the :meth:`.samples` method.
+        :param bool isolated_as_missing: If True, treat isolated nodes as missing
+            across the covered tree intervals (see above). If None (default), this
+            is treated as True.
+        :param list[int] samples: The nodes for which to output alignments. If
+            ``None`` (default), return alignments for all sample nodes in the order
+            given by the :meth:`.samples` method. Non-sample nodes are also supported
+            and will be decoded at sites in the same way as samples.
         :param int left: Alignments will start at this genomic position. If ``None``
             (default) alignments start at 0.
         :param int right: Alignments will stop before this genomic position. If ``None``
@@ -5681,59 +5755,61 @@ class TreeSequence:
             "N" if missing_data_character is None else missing_data_character
         )
 
+        if isolated_as_missing is None:
+            isolated_as_missing = True
+
         L = interval.span
         a = np.empty(L, dtype=np.int8)
-        if reference_sequence is None:
-            if self.has_reference_sequence():
-                # This may be inefficient - see #1989. However, since we're
-                # n copies of the reference sequence anyway, this is a relatively
-                # minor tweak. We may also want to recode the below not to use direct
-                # access to the .data attribute, e.g. if we allow reference sequences
-                # to start at non-zero positions
-                reference_sequence = self.reference_sequence.data[
-                    interval.left : interval.right
-                ]
-            else:
-                reference_sequence = missing_data_character * L
+        full_ref = None
+        if reference_sequence is not None:
+            full_ref = reference_sequence
+        elif self.has_reference_sequence():
+            # This may be inefficient - see #1989. However, since we're
+            # n copies of the reference sequence anyway, this is a relatively
+            # minor tweak. We may also want to recode the below not to use direct
+            # access to the .data attribute, e.g. if we allow reference sequences
+            # to start at non-zero positions
+            full_ref = self.reference_sequence.data
 
-        if len(reference_sequence) != L:
-            if interval.right == int(self.sequence_length):
+        if full_ref is None:
+            ref_slice = missing_data_character * L
+        else:
+            if len(full_ref) != int(self.sequence_length):
                 raise ValueError(
-                    "The reference sequence is shorter than the tree sequence length"
+                    "The reference sequence must be equal to the tree sequence length"
                 )
-            else:
-                raise ValueError(
-                    "The reference sequence ends before the requested stop position"
-                )
-        ref_bytes = reference_sequence.encode("ascii")
-        a[:] = np.frombuffer(ref_bytes, dtype=np.int8)
+            ref_slice = full_ref[interval.left : interval.right]
 
-        # To do this properly we'll have to detect the missing data as
-        # part of a full implementation of alignments in C. The current
-        # definition might not be calling some degenerate cases correctly;
-        # see https://github.com/tskit-dev/tskit/issues/1908
-        #
-        # Note also that this will call the presence of missing data
-        # incorrectly if have a sample isolated over the region (a, b],
-        # and if we have sites at each position from a to b, and at
-        # each site there is a mutation over the isolated sample.
-        if any(tree._has_isolated_samples() for tree in self.trees()):
-            raise ValueError(
-                "Missing data not currently supported in alignments; see "
-                "https://github.com/tskit-dev/tskit/issues/1896 for details."
-                "The current implementation may also incorrectly identify an "
-                "input tree sequence has having missing data."
-            )
+        # TODO Replace this readable Python version with a C backend
+        # Reusable reference buffer for this interval
+        ref_bytes = ref_slice.encode("ascii")
+        ref_array = np.frombuffer(ref_bytes, dtype=np.int8)
+
         H, (first_site_id, last_site_id) = self._haplotypes_array(
             interval=interval,
+            isolated_as_missing=isolated_as_missing,
             missing_data_character=missing_data_character,
             samples=samples,
         )
         site_pos = self.sites_position.astype(np.int64)[
             first_site_id : last_site_id + 1
         ]
-        for h in H:
-            a[site_pos - interval.left] = h
+        # Determine the requested node order
+        sample_ids = self.samples() if samples is None else list(samples)
+        missing_val = ord(missing_data_character)
+        for i, u in enumerate(sample_ids):
+            # Reset to the reference for this row
+            a[:] = ref_array
+            if isolated_as_missing:
+                # Mark isolated intervals as missing for this node
+                for t in self.trees():
+                    li = max(interval.left, int(t.interval.left))
+                    ri = min(interval.right, int(t.interval.right))
+                    if ri > li and t.is_isolated(u):
+                        a[li - interval.left : ri - interval.left] = missing_val
+            # Overlay site alleles for this node
+            if H.shape[1] > 0:
+                a[site_pos - interval.left] = H[i]
             yield a.tobytes().decode("ascii")
 
     @property
@@ -5965,7 +6041,9 @@ class TreeSequence:
                 "The sites_ancestral_state property requires numpy 2.0 or later."
             )
         if self._sites_ancestral_state is None:
-            self._sites_ancestral_state = self._ll_tree_sequence.sites_ancestral_state
+            self._sites_ancestral_state = (
+                self._ll_tree_sequence.sites_ancestral_state_string
+            )
         return self._sites_ancestral_state
 
     @property
@@ -6037,7 +6115,7 @@ class TreeSequence:
             )
         if self._mutations_derived_state is None:
             self._mutations_derived_state = (
-                self._ll_tree_sequence.mutations_derived_state
+                self._ll_tree_sequence.mutations_derived_state_string
             )
         return self._mutations_derived_state
 
@@ -6065,6 +6143,29 @@ class TreeSequence:
         if self._mutations_edge is None:
             self._mutations_edge = self._ll_tree_sequence.get_mutations_edge()
         return self._mutations_edge
+
+    @property
+    def mutations_inherited_state(self):
+        """
+        Return an array of the inherited state for each mutation in the tree sequence.
+
+        The inherited state for a mutation is the state that existed at the site
+        before the mutation occurred. This is either the ancestral state of the site
+        (if the mutation has no parent) or the derived state of the mutation's
+        parent mutation (if it has a parent).
+
+        :return: Array of shape (num_mutations,) containing inherited states.
+        :rtype: numpy.ndarray
+        """
+        if not _tskit.HAS_NUMPY_2:
+            raise RuntimeError(
+                "The mutations_inherited_state property requires numpy 2.0 or later."
+            )
+        if self._mutations_inherited_state is None:
+            self._mutations_inherited_state = (
+                self._ll_tree_sequence.mutations_inherited_state_string
+            )
+        return self._mutations_inherited_state
 
     @property
     def migrations_left(self):
@@ -6307,6 +6408,7 @@ class TreeSequence:
             metadata,
             time,
             edge,
+            inherited_state,
         ) = self._ll_tree_sequence.get_mutation(id_)
         return Mutation(
             id=id_,
@@ -6317,6 +6419,7 @@ class TreeSequence:
             metadata=metadata,
             time=time,
             edge=edge,
+            inherited_state=inherited_state,
             metadata_decoder=self.table_metadata_schemas.mutation.decode_row,
         )
 
@@ -6532,13 +6635,13 @@ class TreeSequence:
         to the sites in the tree sequence object.
 
         .. note::
-           Older code often uses the ``ploidy=2`` argument, because old
-           versions of msprime did not output individual data. Specifying
-           individuals in the tree sequence is more robust, and since tree
-           sequences now  typically contain individuals (e.g., as produced by
-           ``msprime.sim_ancestry( )``), this is not necessary, and the
-           ``ploidy`` argument can safely be removed as part of the process
-           of updating from the msprime 0.x legacy API.
+            Older code often uses the ``ploidy=2`` argument, because old
+            versions of msprime did not output individual data. Specifying
+            individuals in the tree sequence is more robust, and since tree
+            sequences now  typically contain individuals (e.g., as produced by
+            ``msprime.sim_ancestry( )``), this is not necessary, and the
+            ``ploidy`` argument can safely be removed as part of the process
+            of updating from the msprime 0.x legacy API.
 
         :param io.IOBase output: The file-like object to write the VCF output.
         :param int ploidy: The ploidy of the individuals to be written to
@@ -6623,6 +6726,7 @@ class TreeSequence:
         wrap_width=60,
         reference_sequence=None,
         missing_data_character=None,
+        isolated_as_missing=None,
     ):
         """
         Writes the :meth:`.alignments` for this tree sequence to file in
@@ -6647,12 +6751,6 @@ class TreeSequence:
 
             ts.write_fasta("output.fa")
 
-        .. warning:: :ref:`Missing data<sec_data_model_missing_data>` is not
-            currently supported by this method and it will raise a ValueError
-            if called on tree sequences containing isolated samples.
-            See https://github.com/tskit-dev/tskit/issues/1896 for more
-            information.
-
         :param file_or_path: The file object or path to write the output.
             Paths can be either strings or :class:`python:pathlib.Path` objects.
         :param int wrap_width: The number of sequence
@@ -6661,6 +6759,7 @@ class TreeSequence:
             (Default=60).
         :param str reference_sequence: As for the :meth:`.alignments` method.
         :param str missing_data_character: As for the :meth:`.alignments` method.
+        :param bool isolated_as_missing: As for the :meth:`.alignments` method.
         """
         text_formats.write_fasta(
             self,
@@ -6668,6 +6767,7 @@ class TreeSequence:
             wrap_width=wrap_width,
             reference_sequence=reference_sequence,
             missing_data_character=missing_data_character,
+            isolated_as_missing=isolated_as_missing,
         )
 
     def as_fasta(self, **kwargs):
@@ -6691,6 +6791,7 @@ class TreeSequence:
         include_alignments=None,
         reference_sequence=None,
         missing_data_character=None,
+        isolated_as_missing=None,
     ):
         """
         Returns a `nexus encoding <https://en.wikipedia.org/wiki/Nexus_file>`_
@@ -6774,10 +6875,7 @@ class TreeSequence:
             as our convention of using trees with multiple roots
             is not often supported by newick parsers. Thus, the method
             will raise a ValueError if we try to output trees with
-            multiple roots. Additionally, missing data
-            is not currently supported for alignment data.
-            See https://github.com/tskit-dev/tskit/issues/1896 for more
-            information.
+            multiple roots.
 
         .. seealso: See also the :meth:`.as_nexus` method which will
             return this nexus representation as a string.
@@ -6792,6 +6890,7 @@ class TreeSequence:
         :param str reference_sequence: As for the :meth:`.alignments` method.
         :param str missing_data_character: As for the :meth:`.alignments` method,
             but defaults to "?".
+        :param bool isolated_as_missing: As for the :meth:`.alignments` method.
         :return: A nexus representation of this :class:`TreeSequence`
         :rtype: str
         """
@@ -6803,6 +6902,7 @@ class TreeSequence:
             include_alignments=include_alignments,
             reference_sequence=reference_sequence,
             missing_data_character=missing_data_character,
+            isolated_as_missing=isolated_as_missing,
         )
 
     def as_nexus(self, **kwargs):
@@ -7149,19 +7249,32 @@ class TreeSequence:
         self, *args, node_mappings=None, record_provenance=True, add_populations=None
     ):
         r"""
-        Concatenate a set of tree sequences to the right of this one, by repeatedly
-        calling :meth:`~TreeSequence.union` with an (optional)
-        node mapping for each of the ``others``. If any node mapping is ``None``
-        only map the sample nodes between the input tree sequence and this one,
-        based on the numerical order of sample node IDs.
+        Concatenate a set of tree sequences to the right of this one, by shifting
+        their coordinate systems and adding all edges, sites, mutations, and
+        any additional nodes, individuals, or populations needed for these.
+        Concretely, to concatenate an ``other`` tree sequence to ``self``, the value
+        of ``self.sequence_length`` is added to all genomic coordinates in ``other``,
+        and then the concatenated tree sequence  will contain all edges, sites, and
+        mutations in both. Which nodes in ``other`` are treated as "new", and hence
+        added as well, is controlled by ``node_mappings``. Any individuals to which
+        new nodes belong are added as well.
+
+        The method uses :meth:`.shift` followed by :meth:`.union`, with
+        ``all_mutations=True``, ``all_edges=True``, and ``check_shared_equality=False``.
+
+        By default, the samples in current and input tree sequences are assumed to
+        refer to the same nodes, and are matched based on the numerical order of
+        sample node IDs; all other nodes are assumed to be new. This can be
+        changed by providing explicit ``node_mappings`` for each input tree sequence
+        (see below).
 
         .. note::
-            To add gaps between the concatenated tables, use :meth:`shift` or
-            to remove gaps, use :meth:`trim` before concatenating.
+            To add gaps between the concatenated tree sequences, use :meth:`shift`
+            or to remove gaps, use :meth:`trim` before concatenating.
 
         :param TreeSequence \*args: A list of other tree sequences to append to
             the right of this one.
-        :param Union[list, None] node_mappings: An list of node mappings for each
+        :param Union[list, None] node_mappings: A list of node mappings for each
             input tree sequence in ``args``. Each should either be an array of
             integers of the same length as the number of nodes in the equivalent
             input tree sequence (see :meth:`~TreeSequence.union` for details), or
@@ -7203,6 +7316,8 @@ class TreeSequence:
                 other_tables,
                 node_mapping=node_mapping,
                 check_shared_equality=False,  # Else checks fail with internal samples
+                all_mutations=True,
+                all_edges=True,
                 record_provenance=False,
                 add_populations=add_populations,
             )
@@ -7291,7 +7406,7 @@ class TreeSequence:
         is its associated ``time`` value, or the time of its node if the
         mutation's time was marked as unknown (:data:`UNKNOWN_TIME`).
 
-        Migrations are not supported, and a LibraryError will be raise if
+        Migrations are not supported, and a LibraryError will be raised if
         called on a tree sequence containing migration information.
 
         .. seealso:: This method is implemented using the :meth:`.split_edges`
@@ -7327,7 +7442,9 @@ class TreeSequence:
         `n` to `c` are extended, and the span of the edge from `p` to `c` is
         reduced. Thus, the ancestral haplotype represented by `n` is extended
         to a longer span of the genome. However, any edges whose child node is
-        a sample are not modified.
+        a sample are not modified. See
+        `Fritze et al. (2025) <https://doi.org/10.1093/genetics/iyaf198>`_
+        for more details.
 
         Since some edges may be removed entirely, this process usually reduces
         the number of edges in the tree sequence.
@@ -7350,15 +7467,15 @@ class TreeSequence:
         known mutation times.  See :meth:`.impute_unknown_mutations_time` if
         mutation times are not known.
 
-        The method will not affect the marginal trees (so, if the original tree
-        sequence was simplified, then following up with `simplify` will recover
-        the original tree sequence, possibly with edges in a different order).
-        It will also not affect the genotype matrix, or any of the tables other
-        than the edge table or the node column in the mutation table.
+        .. note::
+            The method will not affect the marginal trees (so, if the original tree
+            sequence was simplified, then following up with `simplify` will recover
+            the original tree sequence, possibly with edges in a different order).
+            It will also not affect the genotype matrix, or any of the tables other
+            than the edge table or the node column in the mutation table.
 
-        :param int max_iters: The maximum number of iterations over the tree
+        :param int max_iter: The maximum number of iterations over the tree
             sequence. Defaults to 10.
-
         :return: A new tree sequence with unary nodes extended.
         :rtype: tskit.TreeSequence
         """
@@ -7431,6 +7548,9 @@ class TreeSequence:
         check_shared_equality=True,
         add_populations=True,
         record_provenance=True,
+        *,
+        all_edges=False,
+        all_mutations=False,
     ):
         """
         Returns an expanded tree sequence which contains the node-wise union of
@@ -7446,26 +7566,65 @@ class TreeSequence:
         1. Individuals whose nodes are new to ``self``.
         2. Edges whose parent or child are new to ``self``.
         3. Mutations whose nodes are new to ``self``.
-        4. Sites which were not present in ``self``, if the site contains a newly
-           added mutation.
+        4. Sites whose positions are not present in the site positions in
+           ``self``, if the site contains a newly added mutation.
 
-        By default, populations of newly added nodes are assumed to be new
-        populations, and added to the population table as well. This can be
-        thought of as a "node-wise" union: for instance, it can not be used
-        to add new edges between two nodes already in ``self`` or new mutations
-        above nodes already in ``self``.
+        This can be thought of as a "node-wise" union: for instance, it can not
+        be used to add new edges between two nodes already in ``self`` or new
+        mutations above nodes already in ``self``.
 
-        If the resulting tree sequence is invalid (for instance, a node is
-        specified to have two distinct parents on the same interval),
-        an error will be raised.
+        By default, with ``add_populations=True``, populations of all newly added
+        nodes are assumed to be new populations, and added to the end of the
+        population table as well. This is appropriate if all nodes to be added
+        are from distinct populations not already in ``self`` and ordering of
+        populations is not important. On the other hand, if
+        ``add_populations=False`` then no new populations are added, so any
+        populations referred to in ``other`` must already exist in ``self``.
+        If some new nodes are in populations already in ``self`` but other new
+        nodes are in entirely new populations, then you must set up the
+        population table first, and then union with ``add_populations=False``.
 
-        Note that this operation also sorts the resulting tables, so the
-        resulting tree sequence may not be equal to ``self`` even if nothing
-        new was added (although it would differ only in ordering of the tables).
+        This method makes sense if the "shared" portions of the tree sequences
+        are equal; the option ``check_shared_equality`` performs a consistency
+        check that this is true. If this check is disabled, it is very easy to
+        produce nonsensical results via subtle inconsistencies.
 
-        :param TableCollection other: Another table collection.
+        The behavior above can be changed by ``all_edges`` and ``all_mutations``.
+        If ``all_edges`` is True, then all edges in ``other`` are added to
+        ``self``, instead of only edges adjacent to added nodes. If
+        ``all_mutations`` is True, then similarly all mutations in ``other``
+        are added (not just those on added nodes); furthermore, all sites
+        at positions without a site already present are added to ``self``.
+        The intended use case for these options is a "disjoint" union,
+        where for instance the two tree sequences contain information about
+        disjoint segments of the genome (see :meth:`.concatenate`).
+        For some such applications it may be necessary to set
+        ``check_shared_equality=False``: for instance, if ``other`` has
+        an identical copy of the node table but no edges, then
+        ``all_mutations=True, check_shared_equality=False`` can be used
+        to add mutations to ``self``.
+
+        .. warning::
+            If an equivalent node is specified in ``other``, the
+            version in ``self`` is used without checking the node
+            properties are the same. Similarly, if the same site position
+            is present in both ``self`` and ``other``, the version in
+            ``self`` is used without checking that site properties are
+            the same. In these cases metadata and e.g. node times or ancestral
+            states in ``other`` are simply ignored.
+
+        .. note::
+            This operation also sorts the resulting tables, so the resulting
+            tree sequence may not be equal to ``self`` even if nothing new
+            was added (although it would differ only in ordering of the tables).
+
+        :param TreeSequence other: Another tree sequence.
         :param list node_mapping: An array of node IDs that relate nodes in
             ``other`` to nodes in ``self``.
+        :param bool all_edges: If True, then all edges in ``other`` are added
+            to ``self``.
+        :param bool all_mutations: If True, then all mutations and sites in
+            ``other`` are added to ``self``.
         :param bool check_shared_equality: If True, the shared portions of the
             tree sequences will be checked for equality. It does so by
             running :meth:`TreeSequence.subset` on both ``self`` and ``other``
@@ -7475,6 +7634,11 @@ class TreeSequence:
             assigned new population IDs.
         :param bool record_provenance: Whether to record a provenance entry
             in the provenance table for this operation.
+        :return: The union of the two tree sequences.
+        :rtype: tskit.TreeSequence
+        :raises: **tskit.LibraryError** -- If the resulting tree sequence is invalid
+            (for instance, a node is specified to have two distinct
+            parents on the same interval)
         """
         tables = self.dump_tables()
         other_tables = other.dump_tables()
@@ -7484,6 +7648,8 @@ class TreeSequence:
             check_shared_equality=check_shared_equality,
             add_populations=add_populations,
             record_provenance=record_provenance,
+            all_edges=all_edges,
+            all_mutations=all_mutations,
         )
         return tables.tree_sequence()
 
@@ -7950,12 +8116,32 @@ class TreeSequence:
                 )
         return np.array(windows)
 
+    def parse_time_windows(self, time_windows):
+        if time_windows is None:
+            time_windows = [0.0, math.inf]
+        return np.array(time_windows)
+
     def __run_windowed_stat(self, windows, method, *args, **kwargs):
-        strip_dim = windows is None
+        strip_win = windows is None
         windows = self.parse_windows(windows)
         stat = method(*args, **kwargs, windows=windows)
-        if strip_dim:
+        if strip_win:
             stat = stat[0]
+        return stat
+
+    # only for temporary tw version
+    def __run_windowed_stat_tw(self, windows, time_windows, method, *args, **kwargs):
+        strip_win = windows is None
+        strip_timewin = time_windows is None
+        windows = self.parse_windows(windows)
+        time_windows = self.parse_time_windows(time_windows)
+        stat = method(*args, **kwargs, windows=windows, time_windows=time_windows)
+        if strip_win and strip_timewin:
+            stat = stat[0, 0, :]
+        elif strip_win:
+            stat = stat[0, :, :]
+        elif strip_timewin:
+            stat = stat[:, 0, :]
         return stat
 
     def __one_way_sample_set_stat(
@@ -7963,13 +8149,13 @@ class TreeSequence:
         ll_method,
         sample_sets,
         windows=None,
+        time_windows=None,
         mode=None,
         span_normalise=True,
         polarised=False,
     ):
         if sample_sets is None:
             sample_sets = self.samples()
-
         # First try to convert to a 1D numpy array. If it is, then we strip off
         # the corresponding dimension from the output.
         drop_dimension = False
@@ -7983,7 +8169,6 @@ class TreeSequence:
             if len(sample_sets.shape) == 1:
                 sample_sets = [sample_sets]
                 drop_dimension = True
-
         sample_set_sizes = np.array(
             [len(sample_set) for sample_set in sample_sets], dtype=np.uint32
         )
@@ -7991,18 +8176,33 @@ class TreeSequence:
             raise ValueError("Sample sets must contain at least one element")
 
         flattened = util.safe_np_int_cast(np.hstack(sample_sets), np.int32)
-        stat = self.__run_windowed_stat(
-            windows,
-            ll_method,
-            sample_set_sizes,
-            flattened,
-            mode=mode,
-            span_normalise=span_normalise,
-            polarised=polarised,
-        )
+        # this next line is temporary, while time windows are implemented
+        # in other methods
+        use_tw = ll_method.__name__ == "allele_frequency_spectrum"
+        if use_tw:
+            stat = self.__run_windowed_stat_tw(
+                windows,
+                time_windows,
+                ll_method,
+                sample_set_sizes,
+                flattened,
+                mode=mode,
+                span_normalise=span_normalise,
+                polarised=polarised,
+            )
+        else:
+            stat = self.__run_windowed_stat(
+                windows,
+                ll_method,
+                sample_set_sizes,
+                flattened,
+                mode=mode,
+                span_normalise=span_normalise,
+                polarised=polarised,
+            )
         if drop_dimension:
             stat = stat.reshape(stat.shape[:-1])
-            if stat.shape == () and windows is None:
+            if stat.shape == () and windows is None and time_windows is None:
                 stat = stat[()]
         return stat
 
@@ -8093,6 +8293,52 @@ class TreeSequence:
             # With this orientation, we get one LD matrix per sample set.
             result = result.swapaxes(0, 2).swapaxes(1, 2)
 
+        return result
+
+    def __k_way_two_locus_sample_set_stat(
+        self,
+        ll_method,
+        k,
+        sample_sets,
+        indexes=None,
+        sites=None,
+        positions=None,
+        mode=None,
+    ):
+        sample_set_sizes = np.array(
+            [len(sample_set) for sample_set in sample_sets], dtype=np.uint32
+        )
+        if np.any(sample_set_sizes == 0):
+            raise ValueError("Sample sets must contain at least one element")
+        flattened = util.safe_np_int_cast(np.hstack(sample_sets), np.int32)
+        row_sites, col_sites = self.parse_sites(sites)
+        row_positions, col_positions = self.parse_positions(positions)
+        drop_dimension = False
+        indexes = util.safe_np_int_cast(indexes, np.int32)
+        if len(indexes.shape) == 1:
+            indexes = indexes.reshape((1, indexes.shape[0]))
+            drop_dimension = True
+        if len(indexes.shape) != 2 or indexes.shape[1] != k:
+            raise ValueError(
+                "Indexes must be convertable to a 2D numpy array with {} "
+                "columns".format(k)
+            )
+        result = ll_method(
+            sample_set_sizes,
+            flattened,
+            indexes,
+            row_sites,
+            col_sites,
+            row_positions,
+            col_positions,
+            mode,
+        )
+        if drop_dimension:
+            result = result.reshape(result.shape[:2])
+        else:
+            # Orient the data so that the first dimension is the sample set.
+            # With this orientation, we get one LD matrix per sample set.
+            result = result.swapaxes(0, 2).swapaxes(1, 2)
         return result
 
     def __k_way_sample_set_stat(
@@ -8473,52 +8719,6 @@ class TreeSequence:
             sizes = np.array(sizes, dtype=size_dtype)
         return flat, sizes
 
-    # def divergence_matrix(self, sample_sets, windows=None, mode="site"):
-    #     """
-    #     Finds the mean divergence  between pairs of samples from each set of
-    #     samples and in each window. Returns a numpy array indexed by (window,
-    #     sample_set, sample_set).  Diagonal entries are corrected so that the
-    #     value gives the mean divergence for *distinct* samples, but it is not
-    #     checked whether the sample_sets are disjoint (so offdiagonals are not
-    #     corrected).  For this reason, if an element of `sample_sets` has only
-    #     one element, the corresponding diagonal will be NaN.
-
-    #     The mean divergence between two samples is defined to be the mean: (as
-    #     a TreeStat) length of all edges separating them in the tree, or (as a
-    #     SiteStat) density of segregating sites, at a uniformly chosen position
-    #     on the genome.
-
-    #     :param list sample_sets: A list of sets of IDs of samples.
-    #     :param iterable windows: The breakpoints of the windows (including start
-    #         and end, so has one more entry than number of windows).
-    #     :return: A list of the upper triangle of mean TMRCA values in row-major
-    #         order, including the diagonal.
-    #     """
-    #     ns = len(sample_sets)
-    #     indexes = [(i, j) for i in range(ns) for j in range(i, ns)]
-    #     x = self.divergence(sample_sets, indexes, windows, mode=mode)
-    #     nw = len(windows) - 1
-    #     A = np.ones((nw, ns, ns), dtype=float)
-    #     for w in range(nw):
-    #         k = 0
-    #         for i in range(ns):
-    #             for j in range(i, ns):
-    #                 A[w, i, j] = A[w, j, i] = x[w][k]
-    #                 k += 1
-    #     return A
-    # NOTE: see older definition of divmat here, which may be useful when documenting
-    # this function. See https://github.com/tskit-dev/tskit/issues/2781
-
-    # NOTE for documentation of sample_sets. We *must* use samples currently because
-    # the normalisation for non-sample nodes is tricky. Do we normalise by the
-    # total span of the ts where the node is 'present' in the tree? We avoid this
-    # by insisting on sample nodes.
-
-    # NOTE for documentation of num_threads. Need to explain that the
-    # its best to think of as the number of background *worker* threads.
-    # default is to run without any worker threads. If you want to run
-    # with all the cores on the machine, use num_threads=os.cpu_count().
-
     def divergence_matrix(
         self,
         sample_sets=None,
@@ -8528,6 +8728,41 @@ class TreeSequence:
         mode=None,
         span_normalise=True,
     ):
+        """
+        Finds the matrix of pairwise :meth:`.divergence` values between groups
+        of sample nodes. Returns a numpy array indexed by (window,
+        sample_set, sample_set): the [k,i,j]th value of the result gives the
+        mean divergence between pairs of samples from the i-th and j-th
+        sample sets in the k-th window. As for :meth:`.divergence`,
+        diagonal entries are corrected so that the
+        value gives the mean divergence for *distinct* samples,
+        and so diagonal entries are given by the :meth:`.diversity` of that
+        sample set.  For this reason, if an element of `sample_sets` has only
+        one element, the corresponding :meth:`.diversity` will be NaN.
+        However, this method will place a value of 0 in the diagonal instead of NaN
+        in such cases; otherwise, this is equivalent to computing values with
+        `meth`:.divergence`.
+        However, this is (usually) more efficient than computing many
+        pairwise values using the `indexes` argument to :meth:`.divergence`,
+        so see :meth:`.divergence` for a description of what exactly is computed.
+
+        :param list sample_sets: A list of sets of IDs of samples.
+        :param list windows: The breakpoints of the windows (including start
+            and end, so has one more entry than number of windows).
+        :param str mode: A string giving the "type" of the statistic to be computed
+            (defaults to "site"; the other option is "branch").
+        :return: An array indexed by (window, sample_set, sample_set), or if windows is
+            `None`, an array indexed by (sample_set, sample_set).
+        """
+        # NOTE for documentation of sample_sets. We *must* use samples currently because
+        # the normalisation for non-sample nodes is tricky. Do we normalise by the
+        # total span of the ts where the node is 'present' in the tree? We avoid this
+        # by insisting on sample nodes.
+
+        # NOTE for documentation of num_threads. Need to explain that the
+        # its best to think of as the number of background *worker* threads.
+        # default is to run without any worker threads. If you want to run
+        # with all the cores on the machine, use num_threads=os.cpu_count().
         windows_specified = windows is not None
         windows = self.parse_windows(windows)
         mode = "site" if mode is None else mode
@@ -8735,7 +8970,16 @@ class TreeSequence:
         """
         Computes the full matrix of pairwise genetic relatedness values
         between (and within) pairs of sets of nodes from ``sample_sets``.
-        *Warning:* this does not compute exactly the same thing as
+        Returns a numpy array indexed by (window, sample_set, sample_set):
+        the [k,i,j]th value of the result gives the
+        genetic relatedness between pairs of samples from the i-th and j-th
+        sample sets in the k-th window.
+        This is (usually) more efficient than computing many pairwise
+        values using the `indexes` argument to :meth:`.genetic_relatedness`.
+        Specifically, this computes :meth:`.genetic_relatedness` with
+        ``centre=True`` and ``proportion=False`` (with caveats, see below).
+
+        *Warning:* in some cases, this does not compute exactly the same thing as
         :meth:`.genetic_relatedness`: see below for more details.
 
         If `mode="branch"`, then the value obtained is the same as that from
@@ -8743,29 +8987,35 @@ class TreeSequence:
         `proportion=False`. The same is true if `mode="site"` and all sites have
         at most one mutation.
 
-        However, if some sites have more than one mutation, the value may differ.
+        However, if some sites have more than one mutation, the value may differ
+        from that given by :meth:`.genetic_relatedness`:, although if the proportion
+        of such sites is small, the difference will be small.
         The reason is that this function (for efficiency) computes relatedness
-        using :meth:`.divergence` and the following relationship.
+        using :meth:`.divergence_matrix` and the following relationship.
         "Relatedness" measures the number of *shared* alleles (or branches),
         while "divergence" measures the number of *non-shared* alleles (or branches).
         Let :math:`T_i` be the total distance from sample :math:`i` up to the root;
-        then if :math:`D_{ij}` is the divergence between :math:`i` and :math:`j`
-        and :math:`R_{ij}` is the relatedness between :math:`i` and :math:`j`, then
-        :math:`T_i + T_j = D_{ij} + 2 R_{ij}.`
+        then if :math:`D_{ij}` is the branch-mode divergence between :math:`i` and
+        :math:`j` and :math:`R_{ij}` is the branch-mode relatedness between :math:`i`
+        and :math:`j`, then :math:`T_i + T_j = D_{ij} + 2 R_{ij}.`
         So, for any samples :math:`I`, :math:`J`, :math:`S`, :math:`T`
         (that may now be random choices),
         :math:`R_{IJ}-R_{IS}-R_{JT}+R_{ST} = (D_{IJ}-D_{IS}-D_{JT}+D_{ST})/ (-2)`.
-        Note, however, that this relationship only holds for `mode="site"`
-        if we can treat "number of differing alleles" as distances on the tree;
-        this is not necessarily the case in the presence of multiple mutations.
+        This is exactly what we want for (centered) relatedness.
+        However, this relationship does not necessarily hold for `mode="site"`:
+        it does hold if we can treat "number of differing alleles" as distances
+        on the tree, but this is not necessarily the case in the presence of
+        multiple mutations.
 
-        Another caveat in the above relationship between :math:`R` and :math:`D`
+        Another note regarding the above relationship between :math:`R` and :math:`D`
         is that :meth:`.divergence` of a sample set to itself does not include
         the "self" comparisons (so as to provide an unbiased estimator of a
         population quantity), while the usual definition of genetic relatedness
         *does* include such comparisons (to provide, for instance, an appropriate
         value for prospective results beginning with only a given set of
-        individuals).
+        individuals). So, diagonal entries in the relatedness matrix returned here
+        are obtained from :meth:`divergence_matrix` after first correcting
+        diagonals to include these "self" comparisons.
 
         :param list sample_sets: A list of lists of Node IDs, specifying the
             groups of nodes to compute the statistic with.
@@ -8774,11 +9024,35 @@ class TreeSequence:
         :param str mode: A string giving the "type" of the statistic to be computed
             (defaults to "site").
         :param bool span_normalise: Whether to divide the result by the span of the
-            window (defaults to True). Has no effect if ``proportion`` is True.
-        :return: A ndarray with shape equal to (num windows, num statistics).
-            If there is one pair of sample sets and windows=None, a numpy scalar is
-            returned.
+            window (defaults to True).
+        :return: An array indexed by (window, sample_set, sample_set), or if windows is
+            `None`, an array indexed by (sample_set, sample_set).
         """
+        # Further notes on the relationship between relatedness (R)
+        # and divergence (D) in mode="site":
+        # The summary function for divergence is "p (1-q)",
+        # where p and q are the allele frequencies in the two sample sets;
+        # while for relatedness it is "pq". Summing across *all* alleles,
+        # we get that relatedness plus divergence is
+        # p1 (1-q1) + p1 q1 + ... + pk (1-qk) + pk qk = p1 + ... + pk = 1 .
+        # This implies that
+        # ts.divergence(..., span_normalise=False)
+        # + ts.genetic_relatedness(..., span_normalise=False, centre=False,
+        #       proportion=False, polarised=False)
+        # == ts.num_sites
+        # This could be the basis for a similar relationship between R and D.
+        # However, that relationship holds only with polarised=False, which is not
+        # the default, or what this function does (for good reason).
+        # So, without setting polarised=False, we have that that for samples i and j,
+        # divergence plus relatedness is equal to (something like)
+        # the total number of sites at which both i and j are ancestral;
+        # this depends on the samples and so does not cancel out of the centred
+        # version. We could work through these relationships to figure out what exactly
+        # the difference between genetic_relatedness_matrix(mode="site") and
+        # genetic_relatedness(mode="site") is, in the general case of multiple
+        # mutations... but that would be confusing, probably not that useful,
+        # and the short version of all this is that "it's complicated".
+
         D = self.divergence_matrix(
             sample_sets,
             windows=windows,
@@ -8950,6 +9224,7 @@ class TreeSequence:
             mode=mode,
             centre=False,
             nodes=indices,
+            span_normalise=False,  # <- non-default!
         )[0]
         x = x - x.mean(axis=0) if centre else x
 
@@ -8980,6 +9255,7 @@ class TreeSequence:
             mode=mode,
             centre=False,
             nodes=samples,
+            span_normalise=False,  # <- non-default!
         )[0]
 
         def bincount_fn(w):
@@ -9410,7 +9686,12 @@ class TreeSequence:
         return self.trait_linear_model(*args, **kwargs)
 
     def trait_linear_model(
-        self, W, Z=None, windows=None, mode="site", span_normalise=True
+        self,
+        W,
+        Z=None,
+        windows=None,
+        mode="site",
+        span_normalise=True,
     ):
         """
         Finds the relationship between trait and genotype after accounting for
@@ -9552,6 +9833,7 @@ class TreeSequence:
         self,
         sample_sets=None,
         windows=None,
+        time_windows=None,
         mode="site",
         span_normalise=True,
         polarised=False,
@@ -9590,7 +9872,10 @@ class TreeSequence:
             entry in each AFS array (i.e., ``afs[0]``), but in ``afs[1]``.
 
         If ``sample_sets`` is None (the default), the allele frequency spectrum
-        for all samples in the tree sequence is returned.
+        for all samples in the tree sequence is returned. For convenience, if
+        there is only a single sample set, the outer list may be omitted (so that,
+        unlike other statistics, ``sample_sets=[0,1,2]`` is equivalent to
+        ``sample_sets=[[0,1,2]]``).
 
         If more than one sample set is specified, the **joint** allele frequency
         spectrum within windows is returned. For example, if we set
@@ -9632,7 +9917,7 @@ class TreeSequence:
         are above exactly one sample of `S0` and two samples of `S1`.
 
         :param list sample_sets: A list of lists of Node IDs, specifying the
-            groups of samples to compute the joint allele frequency
+            groups of samples to compute the joint allele frequency.
         :param list windows: An increasing list of breakpoints between windows
             along the genome.
         :param str mode: A string giving the "type" of the statistic to be computed
@@ -9646,10 +9931,22 @@ class TreeSequence:
         """
         if sample_sets is None:
             sample_sets = [self.samples()]
+        try:
+            # this also happens in __one_way_sample_set_stat, but we need to do
+            # slightly different pre-processing here to allow for the case that
+            # sample sets is a single list of IDs (for most stats, this would mean
+            # dropping a dimension, but not for the AFS)
+            sample_sets = np.array(sample_sets, dtype=np.uint64)
+        except ValueError:
+            pass
+        else:
+            if len(sample_sets.shape) == 1:
+                sample_sets = [sample_sets]
         return self.__one_way_sample_set_stat(
             self._ll_tree_sequence.allele_frequency_spectrum,
             sample_sets,
             windows=windows,
+            time_windows=time_windows,
             mode=mode,
             span_normalise=span_normalise,
             polarised=polarised,
@@ -9681,7 +9978,7 @@ class TreeSequence:
             b = 2 * (n**2 + n + 3) / (9 * n * (n - 1)) - (n + 2) / (h * n) + g / h**2
             c = h**2 + g
 
-        What is computed for diversity and divergence depends on ``mode``;
+        What is computed for diversity and segregating sites depends on ``mode``;
         see those functions for more details.
 
         :param list sample_sets: A list of lists of Node IDs, specifying the
@@ -10165,7 +10462,8 @@ class TreeSequence:
 
         For an precise mathematical definition of GNN, see https://doi.org/10.1101/458067
 
-        .. note:: The reference sets need not include all the samples, hence the most
+        .. note::
+            The reference sets need not include all the samples, hence the most
             recent common ancestral node of the reference sets, :math:`a`, need not be
             the immediate ancestor of the focal node. If the reference sets only comprise
             sequences from relatively distant individuals, the GNN statistic may end up
@@ -10427,7 +10725,7 @@ class TreeSequence:
             IBD information.
         :rtype: IdentitySegments
         """
-        return self.tables.ibd_segments(
+        return self.dump_tables().ibd_segments(
             within=within,
             between=between,
             max_time=max_time,
@@ -10753,9 +11051,15 @@ class TreeSequence:
             return mutations_time
 
     def ld_matrix(
-        self, sample_sets=None, sites=None, positions=None, mode="site", stat="r2"
+        self,
+        sample_sets=None,
+        sites=None,
+        positions=None,
+        mode="site",
+        stat="r2",
+        indexes=None,
     ):
-        stats = {
+        one_way_stats = {
             "D": self._ll_tree_sequence.D_matrix,
             "D2": self._ll_tree_sequence.D2_matrix,
             "r2": self._ll_tree_sequence.r2_matrix,
@@ -10767,20 +11071,32 @@ class TreeSequence:
             "D2_unbiased": self._ll_tree_sequence.D2_unbiased_matrix,
             "pi2_unbiased": self._ll_tree_sequence.pi2_unbiased_matrix,
         }
-
+        two_way_stats = {
+            "D2": self._ll_tree_sequence.D2_ij_matrix,
+            "D2_unbiased": self._ll_tree_sequence.D2_ij_unbiased_matrix,
+            "r2": self._ll_tree_sequence.r2_ij_matrix,
+        }
+        stats = one_way_stats if indexes is None else two_way_stats
         try:
-            two_locus_stat = stats[stat]
+            stat_func = stats[stat]
         except KeyError:
             raise ValueError(
                 f"Unknown two-locus statistic '{stat}', we support: {list(stats.keys())}"
             )
 
+        if indexes is not None:
+            return self.__k_way_two_locus_sample_set_stat(
+                stat_func,
+                2,
+                sample_sets,
+                indexes=indexes,
+                sites=sites,
+                positions=positions,
+                mode=mode,
+            )
+
         return self.__two_locus_sample_set_stat(
-            two_locus_stat,
-            sample_sets,
-            sites=sites,
-            positions=positions,
-            mode=mode,
+            stat_func, sample_sets, sites=sites, positions=positions, mode=mode
         )
 
     def sample_nodes_by_ploidy(self, ploidy):
@@ -10843,12 +11159,12 @@ class TreeSequence:
         return an integer numpy array the same dimension as the input. By default,
         this is set to ``numpy.round()`` which will round values to the nearest integer.
 
-        If neither `name_metadata_key` nor `individual_names` is not specified, the
-        individual names are set to "tsk_{individual_id}" for each individual. If
+        If neither `name_metadata_key` nor `individual_names` is specified, the
+        individual names are set to ``"tsk_{individual_id}"`` for each individual. If
         no individuals are present, the individual names are set to "tsk_{i}" with
         `0 <= i < num_sample_nodes/ploidy`.
 
-        A Warning are emmitted if any sample nodes do not have an individual ID.
+        A warning is emitted if any sample nodes do not have an individual ID.
 
         :param list individuals: Specific individual IDs to include in the VCF. If not
             specified and the tree sequence contains individuals, all individuals are

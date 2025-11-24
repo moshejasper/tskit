@@ -1,8 +1,45 @@
---------------------
-[0.6.5] - 2025-0X-XX
---------------------
+----------
+Unreleased
+----------
 
 **Features**
+
+- ``TreeSequence.variants``, ``.genotype_matrix``, ``.haplotypes``, and ``.alignments`` methods
+  now fully support ``isolated_as_missing`` behaviour with internal nodes.
+  (:user:`benjeffery`, :pr:`3313`, :pr:`3317`, :issue:`1896`)
+
+**Breaking Changes**
+
+- The ``reference_sequence`` argument to ``TreeSequence.alignments`` is now required
+  to be the same length as the tree sequence. Previously it was required to be the length
+  of the requested interval.
+  (:user:`benjeffery`, :pr:`3317`)
+
+----------------------
+[1.0.0b3] - 2025-10-15
+----------------------
+
+**Breaking Changes**
+
+- ``TreeSequence.tables`` now returns a zero-copy immutable view of the tables.
+  To get a mutable copy, use ``TreeSequence.dump_tables()``.
+  (:user:`benjeffery`, :pr:`3288`, :issue:`760`)
+  
+- For a tree sequence to be valid mutation parents in the table collection
+  must be correct and consistent with the topology of the tree at each mutation site.
+  ``TableCollection.tree_sequence()`` will raise a ``_tskit.LibraryError`` if this
+  is not the case.
+  (:user:`benjeffery`, :issue:`2729`, :issue:`2732`, :pr:`3212`).
+
+- Drop Python 3.9 support, require Python >= 3.10 (:pr:`3267`, :user:`benjeffery`)
+
+
+**Features**
+
+- Add ``tskit.jit.numba.jitwrap`` and ``NumbaTreeSequence`` to allow simplified
+  use and development of numba-jitted functions with tree sequences. See the 
+  `documentation <https://tskit.dev/tskit/docs/stable/numba.html>`_ for details.
+  (:user:`andrewkern`, :pr:`3295`, :issue:`3294`)
 
 - ``TreeSequence.map_to_vcf_model`` now also returns the transformed positions and
   contig length. (:user:`benjeffery`, :pr:`3174`, :issue:`3173`)
@@ -19,28 +56,70 @@
 - Add ``TreeSequence.mutations_edge`` which returns the edge ID for each mutation's
   edge. (:user:`benjeffery`, :pr:`3226`, :issue:`3189`)
 
+- Add ``TreeSequence.sites_ancestral_state``, ``TreeSequence.mutations_derived_state`` and
+  ``TreeSequence.mutations_inherited_state`` properties  to return the ancestral state of sites,
+  derived state of mutations and inherited state of mutations as NumPy arrays of
+  the new numpy 2.0 StringDType.
+  (:user:`benjeffery`, :pr:`3228`, :issue:`2632`, :pr:`3276`, :issue:`2631`)
+
+- Tskit now distributes with a requirement of numpy version 2 or greater. However, you can still use
+  tskit with numpy 1.X by building tskit from source with numpy 1.X using ``pip install tskit --no-binary tskit``.
+  With numpy 1.X, any use of the new StringDType properties will result in a ``RuntimeError``.
+  If you try to use another python module that was compiled against numpy 1.X with numpy 2.X you may see
+  the error "A module that was compiled using NumPy 1.x cannot be run in NumPy 2.0.0 as it may crash.".
+  If no newer version of the module is available you will have to use the Numpy 1.X build as above.
+
+- Add ``Mutation.inherited_state`` property which returns the inherited state
+  for a single mutation. (:user:`benjeffery`, :pr:`3277`, :issue:`2631`)
+
+- Add ``all_mutations`` and ``all_edges`` options to ``TreeSequence.union``,
+  allowing greater flexibility in "disjoint union" situations.
+  (:user:`hyanwong`, :user:`petrelharp`, :issue:`3181`)
+
+- Add ``TreeSequence.divergence_matrix``, which was previously undocumented.
 
 **Bugfixes**
+
+- In some tables with mutations out-of-order ``TableCollection.sort`` did not re-order
+  the mutations so they formed a valid TreeSequence. ``TableCollection.sort`` and
+  ``TableCollection.canonicalise`` now sort mutations by site, then time (if known),
+  then the mutation's node's time, then number of descendant mutations
+  (ensuring that parent mutations occur before children), then node, then
+  their original order in the tables. (:user:`benjeffery`, :pr:`3257`, :issue:`3253`)
+
+- Fix bug in ``TreeSequence.genetic_relatedness_vector`` that previously ignored
+    ``span_normalise``: previously, ``span_normalise`` was always set to ``False``;
+    now the default is ``True`` in agreement with other statistics, so the returned
+    values will change. (:user:`petrelharp`, :pr:`3300`, :issue:`3241`)
 
 - Fix bug in ``TreeSequence.pair_coalescence_counts`` when ``span_normalise=True``
   and a window breakpoint falls within an internal missing interval.
   (:user:`nspope`, :pr:`3176`, :issue:`3175`)
 
-**Breaking changes** 
+- Fix metadata schemas that are equal but have different byte representations not being equal
+  when using ``TableCollection.assert_equals`` and ``Table.assert_equals``.
+  (:user:`benjeffery`, :pr:`3246`, :issue:`3244`)
+
+- k-way statistics no longer require k sample sets, allowing in particular
+  "self" comparisons for ``TreeSequence.genetic_relatedness``. This changes the
+  error code returned in some situations.
+  (:user:`andrewkern`, :user:`petrelharp`, :pr:`3235`, :issue:`3055`)
+
+- Fix ``UnboundLocalError`` in ``draw_svg()`` when using numeric ``max_time``
+  values with mutations over roots.
+  (:user:`benjeffery`, :pr:`3274`, :issue:`3273`)
+
+- Prevent iterating over a ``TopologyCounter``
+  (:user:`benjeffery` , :pr:`3202`, :issue:`1462`)
+
+- Fix ``TreeSequence.concatenate()`` to work with internal samples by using the
+  ``all_mutations`` and ``all_edges`` parameters in ``union()``
+  (:user:`hyanwong`, :pr:`3283`, :issue:`3181`)
+
+**Breaking changes**
 
 - ``ltrim``, ``rtrim``, ``trim`` and ``shift`` raise an error if used on a tree sequence
   containing a reference sequence (:user:`hyanwong`, :pr:`3210`, :issue:`2091`)
-
-- Add ``TreeSequence.sites_ancestral_state`` and ``TreeSequence.mutations_derived_state`` properties
-  to return the ancestral state of sites and derived state of mutations as NumPy arrays of
-  the new numpy 2.0 StringDType.
-  This requires numpy version 2 or greater, as such this is now the minimum version stated in tskit's
-  dependencies. If you try to use another python module that was compiled against numpy 1.X you may see
-  the error "A module that was compiled using NumPy 1.x cannot be run in NumPy 2.0.0 as it may crash.".
-  If no newer version of the module is avaliable you can still use it with tskit and numpy 1.X by
-  building tskit from source with numpy 1.X using ``pip install tskit --no-binary tskit``. However
-  any use of the new properties will result in a ``RuntimeError``.
-  (:user:`benjeffery`, :pr:`3228`, :issue:`2632`)
 
 --------------------
 [0.6.4] - 2025-05-21
@@ -64,6 +143,7 @@
 - Add ``TreeSequence.map_to_vcf_model`` method to return a mapping of
   the tree sequence to the VCF model. 
   (:user:`benjeffery`, :pr:`3163`)
+
 - Use a thin space as the thousands separator in HTML output,
   and a comma in CLI output.
   (:user:`hossam26644`, :pr:`3167`, :issue:`2951`)

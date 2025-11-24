@@ -1,11 +1,70 @@
+----------
+Unreleased
+----------
+
+**Breaking changes**
+
+- ``trees.c`` now depends on ``genotypes.c`` (via ``tskit/genotypes.h``) and must
+  be built and linked together with it.
+  (:user:`benjeffery`, :pr:`3324`)
+
+
+**Features**
+
+- ``tsk_variant_init`` and associated variant decoding methods now
+  fully support TSK_ISOLATED_NOT_MISSING not being set for internal nodes.
+  (:user:`benjeffery`, :pr:`3313`)
+
+- Add ``tsk_treeseq_decode_alignments`` to decode full-length reference-based
+  sequence alignments for specified nodes over a genomic interval, respecting
+  ``TSK_ISOLATED_NOT_MISSING`` semantics.
+  (:user:`benjeffery` , :pr:`3324`, :issue:`3319`)
+
+
 --------------------
-[1.2.0] - 2025-XX-XX
+[1.2.0] - 2025-09-24
 --------------------
 
 **Breaking changes**
 
 - Remove ``tsk_diff_iter_t`` and associated functions.
   (:user:`benjeffery`, :pr:`3221`, :issue:`2797`).
+
+- ``tsk_treeseq_init`` now requires that mutation parents in the table collection
+  are correct and consistent with the topology of the tree at each mutation site.
+  Returns ``TSK_ERR_BAD_MUTATION_PARENT`` if this is not the case, or 
+  ``TSK_ERR_MUTATION_PARENT_AFTER_CHILD`` if the mutations are not in an order
+  compatible with the correct mutation parent.
+  (:user:`benjeffery`, :issue:`2729`, :issue:`2732`, :pr:`3212`).
+
+**Features**
+
+- Add ``TSK_TS_INIT_COMPUTE_MUTATION_PARENTS`` to ``tsk_treeseq_init``
+  to compute mutation parents from the tree sequence topology.
+  Note that the mutations must be in the correct order.
+  (:user:`benjeffery`, :issue:`2757`, :pr:`3212`).
+
+- Add ``TSK_CHECK_MUTATION_PARENTS`` option to ``tsk_table_collection_check_integrity``
+  to check that mutation parents are consistent with the tree sequence topology.
+  This option implies ``TSK_CHECK_TREES``.
+  (:user:`benjeffery`, :issue:`2729`, :issue:`2732`, :pr:`3212`).
+
+- Add the ``TSK_NO_CHECK_INTEGRITY`` option to ``tsk_table_collection_compute_mutation_parents``
+  to skip the integrity checks that are normally run when computing mutation parents.
+  This is useful for speeding up the computation of mutation parents when the
+  tree sequence is certainly known to be valid.
+  (:user:`benjeffery`, :pr:`3212`).
+
+- Mutations returned by ``tsk_treeseq_get_mutation`` now include pre-computed
+  ``inherited_state`` and ``inherited_state_length`` fields. The inherited state
+  is computed during tree sequence initialization and represents the state that
+  existed at the site before each mutation occurred (either the ancestral state
+  if the mutation is the root mutation or the derived state of the parent mutation).
+  Note that this breaks ABI compatibility due to the addition of these fields
+  to the ``tsk_mutation_t`` struct.
+  (:user:`benjeffery`, :pr:`3277`, :issue:`2631`).
+
+
 
 --------------------
 [1.1.4] - 2025-03-31

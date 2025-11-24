@@ -27,6 +27,7 @@
 
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 
 static void
 test_simplest_missing_data(void)
@@ -512,10 +513,45 @@ test_single_tree_non_samples(void)
 
     tsk_treeseq_from_text(&ts, 1, single_tree_ex_nodes, single_tree_ex_edges, NULL,
         single_tree_ex_sites, single_tree_ex_mutations, NULL, NULL, 0);
-    /* It's an error to hand in non-samples without imputation turned on */
     ret = tsk_vargen_init(&vargen, &ts, samples, 2, NULL, 0);
-    CU_ASSERT_EQUAL_FATAL(ret, TSK_ERR_MUST_IMPUTE_NON_SAMPLES);
-    tsk_vargen_free(&vargen);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tsk_vargen_print_state(&vargen, _devnull);
+
+    ret = tsk_vargen_next(&vargen, &var);
+    CU_ASSERT_EQUAL_FATAL(ret, 1);
+    CU_ASSERT_EQUAL(var->genotypes[0], 0);
+    CU_ASSERT_EQUAL(var->genotypes[1], 0);
+    CU_ASSERT_EQUAL(var->num_alleles, 2);
+    CU_ASSERT_NSTRING_EQUAL(var->alleles[0], "0", 1);
+    CU_ASSERT_NSTRING_EQUAL(var->alleles[1], "1", 1);
+    CU_ASSERT_EQUAL(var->site.id, 0);
+    CU_ASSERT_EQUAL(var->site.mutations_length, 1);
+
+    ret = tsk_vargen_next(&vargen, &var);
+    CU_ASSERT_EQUAL_FATAL(ret, 1);
+    CU_ASSERT_EQUAL(var->genotypes[1], 0);
+    CU_ASSERT_EQUAL(var->genotypes[0], 1);
+    CU_ASSERT_EQUAL(var->num_alleles, 2);
+    CU_ASSERT_NSTRING_EQUAL(var->alleles[0], "0", 1);
+    CU_ASSERT_NSTRING_EQUAL(var->alleles[1], "1", 1);
+    CU_ASSERT_EQUAL(var->site.id, 1);
+    CU_ASSERT_EQUAL(var->site.mutations_length, 2);
+
+    ret = tsk_vargen_next(&vargen, &var);
+    CU_ASSERT_EQUAL_FATAL(ret, 1);
+    CU_ASSERT_EQUAL(var->genotypes[0], 0);
+    CU_ASSERT_EQUAL(var->genotypes[1], 0);
+    CU_ASSERT_EQUAL(var->num_alleles, 2);
+    CU_ASSERT_NSTRING_EQUAL(var->alleles[0], "0", 1);
+    CU_ASSERT_NSTRING_EQUAL(var->alleles[1], "1", 1);
+    CU_ASSERT_EQUAL(var->site.id, 2);
+    CU_ASSERT_EQUAL(var->site.mutations_length, 4);
+
+    ret = tsk_vargen_next(&vargen, &var);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+
+    ret = tsk_vargen_free(&vargen);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
 
     ret = tsk_vargen_init(&vargen, &ts, samples, 2, NULL, TSK_ISOLATED_NOT_MISSING);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
@@ -556,6 +592,60 @@ test_single_tree_non_samples(void)
 
     ret = tsk_vargen_free(&vargen);
     CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_isolated_internal_node(void)
+{
+    int ret = 0;
+    tsk_treeseq_t ts;
+    tsk_vargen_t vargen;
+    tsk_variant_t *var;
+    /* Two sample nodes (0,1), plus an internal non-sample node u=2 with no edges */
+    const char *nodes = "1  0   -1   -1\n"
+                        "1  0   -1   -1\n"
+                        "0  1   -1   -1\n";
+    const char *sites = "2.0    A\n"
+                        "9.0    T\n";
+    tsk_id_t samples[] = { 2 };
+
+    tsk_treeseq_from_text(&ts, 10, nodes, "", NULL, sites, NULL, NULL, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(tsk_treeseq_get_num_nodes(&ts), 3);
+    CU_ASSERT_EQUAL_FATAL(tsk_treeseq_get_num_samples(&ts), 2);
+    CU_ASSERT_EQUAL_FATAL(tsk_treeseq_get_num_sites(&ts), 2);
+
+    /* Default options (isolated_as_missing=True): internal node is isolated everywhere
+     */
+    ret = tsk_vargen_init(&vargen, &ts, samples, 1, NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_vargen_next(&vargen, &var);
+    CU_ASSERT_EQUAL_FATAL(ret, 1);
+    CU_ASSERT_TRUE(var->has_missing_data);
+    CU_ASSERT_EQUAL(var->genotypes[0], TSK_MISSING_DATA);
+    ret = tsk_vargen_next(&vargen, &var);
+    CU_ASSERT_EQUAL_FATAL(ret, 1);
+    CU_ASSERT_TRUE(var->has_missing_data);
+    CU_ASSERT_EQUAL(var->genotypes[0], TSK_MISSING_DATA);
+    ret = tsk_vargen_next(&vargen, &var);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tsk_vargen_free(&vargen);
+
+    /* Impute missing (isolated_as_missing=False): genotypes should be ancestral (0) */
+    ret = tsk_vargen_init(&vargen, &ts, samples, 1, NULL, TSK_ISOLATED_NOT_MISSING);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    ret = tsk_vargen_next(&vargen, &var);
+    CU_ASSERT_EQUAL_FATAL(ret, 1);
+    CU_ASSERT_FALSE(var->has_missing_data);
+    CU_ASSERT_EQUAL(var->genotypes[0], 0);
+    ret = tsk_vargen_next(&vargen, &var);
+    CU_ASSERT_EQUAL_FATAL(ret, 1);
+    CU_ASSERT_FALSE(var->has_missing_data);
+    CU_ASSERT_EQUAL(var->genotypes[0], 0);
+    ret = tsk_vargen_next(&vargen, &var);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tsk_vargen_free(&vargen);
+
     tsk_treeseq_free(&ts);
 }
 
@@ -1109,6 +1199,379 @@ test_variant_copy_memory_management(void)
     tsk_treeseq_free(&ts);
 }
 
+static void
+build_balanced_three_example_align(tsk_treeseq_t *ts)
+{
+    const char *nodes = "1  0   0  -1\n"
+                        "1  0   0  -1\n"
+                        "1  0   0  -1\n"
+                        "0  1   0  -1\n"
+                        "0  2   0  -1\n";
+    const char *edges = "0  10  3  1,2\n"
+                        "0  10  4  0,3\n";
+    const char *sites = "2  A\n"
+                        "9  T\n";
+    const char *mutations = "0  0  G\n"
+                            "1  3  C\n";
+    tsk_treeseq_from_text(ts, 10, nodes, edges, NULL, sites, mutations, NULL, NULL, 0);
+}
+
+static void
+test_alignments_basic_default(void)
+{
+    int ret = 0;
+    tsk_treeseq_t ts;
+    const char *ref = "NNNNNNNNNN";
+    const tsk_id_t *samples;
+    tsk_size_t n, L;
+    char *buf;
+
+    build_balanced_three_example_align(&ts);
+    samples = tsk_treeseq_get_samples(&ts);
+    n = tsk_treeseq_get_num_samples(&ts);
+    L = 10;
+    buf = tsk_malloc(n * L);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf);
+
+    ret = tsk_treeseq_decode_alignments(
+        &ts, ref, (tsk_size_t) strlen(ref), samples, n, 0, 10, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_NSTRING_EQUAL(buf + 0 * L, "NNGNNNNNNT", L);
+    CU_ASSERT_NSTRING_EQUAL(buf + 1 * L, "NNANNNNNNC", L);
+    CU_ASSERT_NSTRING_EQUAL(buf + 2 * L, "NNANNNNNNC", L);
+
+    tsk_safe_free(buf);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_reference_sequence(void)
+{
+    int ret = 0;
+    tsk_treeseq_t ts;
+    const char *ref = "0123456789";
+    const tsk_id_t *samples;
+    tsk_size_t n, L = 10;
+    char *buf = NULL;
+
+    build_balanced_three_example_align(&ts);
+    samples = tsk_treeseq_get_samples(&ts);
+    n = tsk_treeseq_get_num_samples(&ts);
+    buf = tsk_malloc(n * L);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf);
+
+    ret = tsk_treeseq_decode_alignments(
+        &ts, ref, (tsk_size_t) strlen(ref), samples, n, 0, 10, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_NSTRING_EQUAL(buf + 0 * L, "01G345678T", L);
+    CU_ASSERT_NSTRING_EQUAL(buf + 1 * L, "01A345678C", L);
+    CU_ASSERT_NSTRING_EQUAL(buf + 2 * L, "01A345678C", L);
+
+    tsk_safe_free(buf);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_partial_isolation(void)
+{
+    int ret = 0;
+    const char *nodes = "0  1  0  -1\n"  /* parent */
+                        "1  0  0  -1\n"; /* child sample */
+    const char *edges = "3  7  0  1\n";
+    const char *sites = "5  A\n";
+    const char *mutations = "0  1  G\n";
+    tsk_treeseq_t ts;
+    const char *ref = "0123456789";
+    tsk_id_t node = 1;
+    char buf[10];
+
+    tsk_treeseq_from_text(&ts, 10, nodes, edges, NULL, sites, mutations, NULL, NULL, 0);
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 10, &node, 1, 0, 10, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_NSTRING_EQUAL(buf, "NNN34G6NNN", 10);
+
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 10, &node, 1, 2, 8, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_NSTRING_EQUAL(buf, "N34G6N", 6);
+
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_invalid_allele_length(void)
+{
+    int ret = 0;
+    const char *nodes = "1  0  0  -1\n";
+    const char *edges = "";
+    const char *sites = "2  AC\n";
+    tsk_treeseq_t ts;
+    tsk_id_t node = 0;
+    char buf[5];
+    const char *ref = "NNNNN";
+
+    tsk_treeseq_from_text(&ts, 5, nodes, edges, NULL, sites, NULL, NULL, NULL, 0);
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 5, &node, 1, 0, 5, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSK_ERR_BAD_ALLELE_LENGTH);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_bad_reference_length(void)
+{
+    int ret = 0;
+    const char *nodes = "1  0  0  -1\n";
+    const char *edges = "";
+    tsk_treeseq_t ts;
+    tsk_id_t node = 0;
+    char buf[5];
+    const char *ref = "NNNNN";
+
+    tsk_treeseq_from_text(&ts, 5, nodes, edges, NULL, NULL, NULL, NULL, NULL, 0);
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 4, &node, 1, 0, 5, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSK_ERR_BAD_PARAM_VALUE);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_non_integer_bounds(void)
+{
+    int ret = 0;
+    const char *nodes = "1  0  0  -1\n";
+    const char *edges = "";
+    tsk_treeseq_t ts;
+    tsk_id_t node = 0;
+    char buf[5];
+    const char *ref = "NNNNN";
+
+    tsk_treeseq_from_text(&ts, 5, nodes, edges, NULL, NULL, NULL, NULL, NULL, 0);
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 5, &node, 1, 0.5, 5, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSK_ERR_BAD_PARAM_VALUE);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_discrete_genome_required(void)
+{
+    int ret = 0;
+    const char *nodes = "1  0  0  -1\n";
+    const char *edges = "";
+    const char *sites = "0.5  A\n";
+    tsk_treeseq_t ts;
+    tsk_id_t node = 0;
+    char buf[5];
+    const char *ref = "NNNNN";
+
+    tsk_treeseq_from_text(&ts, 5, nodes, edges, NULL, sites, NULL, NULL, NULL, 0);
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 5, &node, 1, 0, 5, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSK_ERR_BAD_PARAM_VALUE);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_isolated_as_not_missing(void)
+{
+    int ret = 0;
+    const char *nodes = "0  1  0  -1\n"  /* parent */
+                        "1  0  0  -1\n"; /* child sample */
+    const char *edges = "3  7  0  1\n";
+    const char *sites = "5  A\n";
+    const char *mutations = "0  1  G\n";
+    tsk_treeseq_t ts;
+    const char *ref = "0123456789";
+    tsk_id_t node = 1;
+    char buf[10];
+
+    tsk_treeseq_from_text(&ts, 10, nodes, edges, NULL, sites, mutations, NULL, NULL, 0);
+    ret = tsk_treeseq_decode_alignments(
+        &ts, ref, 10, &node, 1, 0, 10, 'N', buf, TSK_ISOLATED_NOT_MISSING);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_NSTRING_EQUAL(buf, "01234G6789", 10);
+
+    ret = tsk_treeseq_decode_alignments(
+        &ts, ref, 10, &node, 1, 2, 8, 'N', buf, TSK_ISOLATED_NOT_MISSING);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_NSTRING_EQUAL(buf, "234G67", 6);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_internal_node_non_sample(void)
+{
+    int ret = 0;
+    tsk_treeseq_t ts;
+    const char *ref = "NNNNNNNNNN";
+    tsk_id_t node = 3; /* internal node */
+    char buf[10];
+
+    build_balanced_three_example_align(&ts);
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 10, &node, 1, 0, 10, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_NSTRING_EQUAL(buf, "NNANNNNNNC", 10);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_missing_char_collision(void)
+{
+    int ret = 0;
+    const char *nodes = "1  0  0  -1\n";
+    const char *edges = "";
+    const char *sites = "2  A\n";
+    const char *mutations = "0  0  Q\n"; /* allele equals missing char */
+    tsk_treeseq_t ts;
+    tsk_id_t node = 0;
+    char buf[5];
+    const char *ref = "NNNNN";
+
+    tsk_treeseq_from_text(&ts, 5, nodes, edges, NULL, sites, mutations, NULL, NULL, 0);
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 5, &node, 1, 0, 5, 'Q', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSK_ERR_MISSING_CHAR_COLLISION);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_zero_nodes_ok(void)
+{
+    int ret = 0;
+    tsk_treeseq_t ts;
+    const char *ref = "NNNNNNNNNN";
+    build_balanced_three_example_align(&ts);
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 10, NULL, 0, 0, 10, 'N', NULL, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_bad_bounds_cases(void)
+{
+    int ret = 0;
+    tsk_treeseq_t ts;
+    const char *ref = "NNNNNNNNNN";
+    tsk_id_t node = 0;
+    char buf[1];
+    build_balanced_three_example_align(&ts);
+    /* left == right invalid */
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 10, &node, 1, 5, 5, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSK_ERR_BAD_PARAM_VALUE);
+    /* left negative */
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 10, &node, 1, -1, 5, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, TSK_ERR_BAD_PARAM_VALUE);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_order_preserved(void)
+{
+    int ret = 0;
+    tsk_treeseq_t ts;
+    const char *ref = "NNNNNNNNNN";
+    tsk_id_t nodes_arr[3];
+    char buf[30];
+    tsk_size_t L = 10;
+
+    build_balanced_three_example_align(&ts);
+    nodes_arr[0] = 2;
+    nodes_arr[1] = 0;
+    nodes_arr[2] = 1;
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 10, nodes_arr, 3, 0, 10, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_NSTRING_EQUAL(buf + 0 * L, "NNANNNNNNC", L);
+    CU_ASSERT_NSTRING_EQUAL(buf + 1 * L, "NNGNNNNNNT", L);
+    CU_ASSERT_NSTRING_EQUAL(buf + 2 * L, "NNANNNNNNC", L);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_missing_char_custom(void)
+{
+    int ret = 0;
+    const char *nodes = "0  1  0  -1\n"  /* parent */
+                        "1  0  0  -1\n"; /* child sample */
+    const char *edges = "3  7  0  1\n";
+    const char *sites = "5  A\n";
+    const char *mutations = "0  1  G\n";
+    tsk_treeseq_t ts;
+    const char *ref = "0123456789";
+    tsk_id_t node = 1;
+    char buf[10];
+
+    tsk_treeseq_from_text(&ts, 10, nodes, edges, NULL, sites, mutations, NULL, NULL, 0);
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 10, &node, 1, 0, 10, 'Q', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_NSTRING_EQUAL(buf, "QQQ34G6QQQ", 10);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_embedded_null_reference(void)
+{
+    int ret = 0;
+    tsk_treeseq_t ts;
+    char ref[10] = { '0', '1', '2', '3', '\0', '5', '6', '7', '8', '9' };
+    const tsk_id_t *samples;
+    tsk_size_t n, L = 10;
+    char *buf = NULL;
+    char exp0[10] = { '0', '1', 'G', '3', '\0', '5', '6', '7', '8', 'T' };
+    char exp1[10] = { '0', '1', 'A', '3', '\0', '5', '6', '7', '8', 'C' };
+    char exp2[10] = { '0', '1', 'A', '3', '\0', '5', '6', '7', '8', 'C' };
+
+    build_balanced_three_example_align(&ts);
+    samples = tsk_treeseq_get_samples(&ts);
+    n = tsk_treeseq_get_num_samples(&ts);
+    buf = tsk_malloc(n * L);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf);
+
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 10, samples, n, 0, 10, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    CU_ASSERT_EQUAL(0, memcmp(buf + 0 * L, exp0, (size_t) L));
+    CU_ASSERT_EQUAL(0, memcmp(buf + 1 * L, exp1, (size_t) L));
+    CU_ASSERT_EQUAL(0, memcmp(buf + 2 * L, exp2, (size_t) L));
+    tsk_safe_free(buf);
+    tsk_treeseq_free(&ts);
+}
+
+static void
+test_alignments_growing_allele_buffer(void)
+{
+    /* Verify we handle sites with increasing allele counts without per-site realloc
+     * churn. */
+    int ret = 0;
+    /* Two samples (0,1) with root 2 over [0,3). */
+    const char *nodes = "1  0  0  -1\n"
+                        "1  0  0  -1\n"
+                        "0  1  0  -1\n";
+    const char *edges = "0  3  2  0\n"
+                        "0  3  2  1\n";
+    /* Sites: pos 1 ancestral A; pos 2 ancestral A. */
+    const char *sites = "1  A\n"
+                        "2  A\n";
+    /* Mutations: at site 0 (pos 1) node 0 -> G (2 alleles total).
+     * at site 1 (pos 2) node 0 -> C and node 1 -> T (3 alleles total). */
+    const char *mutations = "0  0  G\n"
+                            "1  0  C\n"
+                            "1  1  T\n";
+
+    tsk_treeseq_t ts;
+    const char *ref = "NNN";
+    const tsk_id_t *samples;
+    tsk_size_t n, L = 3;
+    char *buf = NULL;
+
+    tsk_treeseq_from_text(&ts, 3, nodes, edges, NULL, sites, mutations, NULL, NULL, 0);
+    samples = tsk_treeseq_get_samples(&ts);
+    n = tsk_treeseq_get_num_samples(&ts);
+    buf = tsk_malloc(n * L);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buf);
+
+    ret = tsk_treeseq_decode_alignments(&ts, ref, 3, samples, n, 0, 3, 'N', buf, 0);
+    CU_ASSERT_EQUAL_FATAL(ret, 0);
+    /* Expected: sample 0 -> NGC; sample 1 -> NAT */
+    CU_ASSERT_NSTRING_EQUAL(buf + 0 * L, "NGC", L);
+    CU_ASSERT_NSTRING_EQUAL(buf + 1 * L, "NAT", L);
+
+    tsk_safe_free(buf);
+    tsk_treeseq_free(&ts);
+}
 int
 main(int argc, char **argv)
 {
@@ -1123,6 +1586,7 @@ main(int argc, char **argv)
         { "test_single_tree_char_alphabet", test_single_tree_char_alphabet },
         { "test_single_tree_binary_alphabet", test_single_tree_binary_alphabet },
         { "test_single_tree_non_samples", test_single_tree_non_samples },
+        { "test_isolated_internal_node", test_isolated_internal_node },
         { "test_single_tree_errors", test_single_tree_errors },
         { "test_single_tree_user_alleles_errors", test_single_tree_user_alleles_errors },
         { "test_single_tree_subsample", test_single_tree_subsample },
@@ -1133,6 +1597,29 @@ main(int argc, char **argv)
         { "test_variant_copy", test_variant_copy },
         { "test_variant_copy_long_alleles", test_variant_copy_long_alleles },
         { "test_variant_copy_memory_management", test_variant_copy_memory_management },
+        { "test_alignments_basic_default", test_alignments_basic_default },
+        { "test_alignments_reference_sequence", test_alignments_reference_sequence },
+        { "test_alignments_partial_isolation", test_alignments_partial_isolation },
+        { "test_alignments_isolated_as_not_missing",
+            test_alignments_isolated_as_not_missing },
+        { "test_alignments_internal_node_non_sample",
+            test_alignments_internal_node_non_sample },
+        { "test_alignments_invalid_allele_length",
+            test_alignments_invalid_allele_length },
+        { "test_alignments_bad_reference_length", test_alignments_bad_reference_length },
+        { "test_alignments_non_integer_bounds", test_alignments_non_integer_bounds },
+        { "test_alignments_discrete_genome_required",
+            test_alignments_discrete_genome_required },
+        { "test_alignments_missing_char_collision",
+            test_alignments_missing_char_collision },
+        { "test_alignments_zero_nodes_ok", test_alignments_zero_nodes_ok },
+        { "test_alignments_bad_bounds_cases", test_alignments_bad_bounds_cases },
+        { "test_alignments_order_preserved", test_alignments_order_preserved },
+        { "test_alignments_missing_char_custom", test_alignments_missing_char_custom },
+        { "test_alignments_embedded_null_reference",
+            test_alignments_embedded_null_reference },
+        { "test_alignments_growing_allele_buffer",
+            test_alignments_growing_allele_buffer },
         { NULL, NULL },
     };
 

@@ -35,11 +35,14 @@ Please see the {ref}`tutorial <tutorials:sec_tutorial_stats>` for examples of th
 statistics API in use.
 
 :::{warning}
-{ref}`sec_data_model_missing_data` is not currently
-handled correctly by site statistics defined here, as we always
-assign missing data to be equal to the ancestral state. Later
-versions will add this behaviour as an option and will account
-for the presence of missing data by default.
+Site statistics defined here currently treat :ref:`missing data<sec_data_model_missing_data>`
+in the same way as in earlier versions of tskit: when computing site-based
+statistics, isolated samples without mutations directly above them are treated
+as carrying the ancestral allele rather than as missing. Future versions of
+tskit may expose options to treat missing data differently in statistics; for
+now, if you need explicit control over how missing data is handled you should
+use the low-level genotype/variant APIs (for example with
+``isolated_as_missing=True``) together with your own summary logic.
 :::
 
 (sec_stats_available)=
@@ -72,6 +75,8 @@ appears beside the listed method.
         * {meth}`~TreeSequence.divergence`
         * {meth}`~TreeSequence.genetic_relatedness`
           {meth}`~TreeSequence.genetic_relatedness_weighted`
+          {meth}`~TreeSequence.genetic_relatedness_vector`
+          {meth}`~TreeSequence.genetic_relatedness_matrix`
         * {meth}`~TreeSequence.f4`
           {meth}`~TreeSequence.f3`
           {meth}`~TreeSequence.f2`
@@ -564,12 +569,12 @@ Most statistics are not affected by invariant sites,
 and hence do not depend on any part of the tree that is not ancestral to any of the sample sets.
 However, some statistics are different: for instance, 
 given a pair of samples, {meth}`TreeSequence.genetic_relatedness`
-with `centre=False` (and `polarised=True`, the default for that method)
+with `centre=False` and `polarised=False`
 adds up the total number of alleles (or total area of branches) that is
 either ancestral to both samples *or ancestral to neither*.
 So, it depends on what else is in the tree sequence.
 (For this reason, we don't recommend actually *using* this combination of options for genetic
-relatedness.)
+relatedness; the default for that method is `polarised=True`.)
 
 In terms of the summary function {math}`f(x)`, "not affected by invariant sites" translates to
 {math}`f(0) = f(n) = 0`, where {math}`n` is the vector of sample set sizes.

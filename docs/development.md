@@ -78,32 +78,29 @@ with:
 $ sudo apt install python3-dev python-is-python3 build-essential doxygen
 ```
 
-Python packages required for development are listed in `python/requirements/development.txt`.
-These can be installed using `pip`. We recommend using an isolated environment as below:
+The packages needed for development are specified as optional dependencies
+in the ``python/pyproject.toml`` file. Install these using:
 
 ```bash
 $ python3 -m venv env
 $ source env/bin/activate
-$ python3 -m pip install -r python/requirements/development.txt
+$ cd python
+$ python3 -m pip install -e ".[dev]"
 ```
 
 A few extra dependencies are required if you wish to work on the
 {ref}`C library <sec_development_c_requirements>`.
 
-For OSX and Windows users we recommending using
+For OSX and Windows users we recommend using
 [conda](https://docs.conda.io/projects/conda/en/latest/),
 and isolating development in a dedicated environment as follows:
 
 ```bash
-$ conda env create -f python/requirements/development.yml
+$ conda env create -f python/development.yml
 $ conda activate tskit-dev
 ```
 
-On macOS, conda builds are generally done using `clang` packages that are kept up to date:
-
-```bash
-$ conda install clang_osx-64  clangxx_osx-64
-```
+The environment includes macOS-specific clang packages when needed.
 
 In order to make sure that these compilers work correctly (*e.g.*, so that they can find
 other dependencies installed via `conda`), you need to compile `tskit` with this command
@@ -442,9 +439,8 @@ Test code is contained in the `tests` directory. Tests are also roughly split
 by function, so that tests for the `drawing` module are in the
 `tests/test_drawing.py` file. This is not a one-to-one mapping, though.
 
-The `requirements` directory contains descriptions of the requirements
-needed for development and on various
-{ref}`sec_development_continuous_integration` providers.
+Development dependencies are specified in the `pyproject.toml` file
+and can be installed using pip or conda (via `development.yml`).
 
 (sec_development_python_style)=
 
@@ -531,6 +527,13 @@ under 20 seconds on an modern workstation:
 
 ```bash
 $ python3 -m pytest --skip-slow
+```
+
+If you have an agent running the tests in a sandboxed environment, you may need to
+skip tests thsat require network access or FIFOs:
+
+```bash
+$ python3 -m pytest --skip-network
 ```
 
 If you have a lot of failing tests it can be useful to have a shorter summary
@@ -651,7 +654,7 @@ $ sudo apt install libcunit1-dev ninja-build meson clang-format-6.0
     if so, you can install it instead with `pip` by running
     `pip3 install clang-format==6.0.1 && ln -s clang-format $(which clang-format)-6.0`.
 
-Conda users can install the basic requirements from `python/requirements/development.txt`.
+Conda users can install the development environment using `python/development.yml`.
 
 Unfortunately clang-format is not available on conda, but it is not essential.
 
@@ -740,6 +743,39 @@ that can be reached. (Some classes of error such as malloc failures
 and IO errors are difficult to simulate in C.) Code coverage statistics are
 automatically tracked using [CodeCov](https://codecov.io/gh/tskit-dev/tskit/).
 
+
+### Viewing coverage reports
+
+To generate and view coverage reports for the C tests locally:
+
+Compile with coverage enabled:
+   ```bash
+   $ cd c
+   $ meson build -D b_coverage=true
+   $ ninja -C build
+   ```
+
+Run the tests:
+   ```bash
+   $ ninja -C build test
+   ```
+
+Generate coverage data:
+   ```bash
+   $ cd build
+   $ find ../tskit/*.c -type f -printf "%f\n" | xargs -i gcov -pb libtskit.a.p/tskit_{}.gcno ../tskit/{}
+   ```
+
+The generated `.gcov` files can then be viewed directly with `cat filename.c.gcov`. 
+Lines prefixed with `#####` were never executed, lines with numbers show execution counts, and lines with `-` are non-executable code.
+
+`lcov` can be used to create browsable HTML coverage reports:
+  ```bash
+  $ sudo apt-get install lcov  # if needed
+  $ lcov --capture --directory build-gcc --output-file coverage.info
+  $ genhtml coverage.info --output-directory coverage_html
+  $ firefox coverage_html/index.html
+  ```
 
 ### Coding conventions
 

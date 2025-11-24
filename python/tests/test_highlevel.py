@@ -1218,6 +1218,21 @@ class TestTreeSequence(HighLevelTestCase):
     def test_mutations(self, ts):
         self.verify_mutations(ts)
 
+    @pytest.mark.skipif(not _tskit.HAS_NUMPY_2, reason="Requires NumPy 2.0 or higher")
+    @pytest.mark.parametrize("ts", tsutil.get_example_tree_sequences())
+    def test_mutation_inherited_state_property(self, ts):
+        inherited_states = ts.mutations_inherited_state
+        for mut in ts.mutations():
+            expected = inherited_states[mut.id]
+            actual = mut.inherited_state
+            assert actual == expected
+
+            if mut.parent == tskit.NULL:
+                expected_direct = ts.site(mut.site).ancestral_state
+            else:
+                expected_direct = ts.mutation(mut.parent).derived_state
+            assert actual == expected_direct
+
     def verify_pairwise_diversity(self, ts):
         haplotypes = ts.genotype_matrix(isolated_as_missing=False).T
         if ts.num_samples == 0:
@@ -1277,7 +1292,7 @@ class TestTreeSequence(HighLevelTestCase):
                     tskit.Edge(edgeset.left, edgeset.right, edgeset.parent, child)
                 )
         # squash the edges.
-        t = ts.dump_tables().nodes.time
+        t = ts.tables.nodes.time
         new_edges.sort(key=lambda e: (t[e.parent], e.parent, e.child, e.left))
 
         squashed = []
@@ -1901,24 +1916,20 @@ class TestTreeSequence(HighLevelTestCase):
         with pytest.raises(
             _tskit.LibraryError, match="Table collection must be indexed"
         ):
-            assert tskit.TreeSequence.load_tables(tables).dump_tables().has_index()
+            assert tskit.TreeSequence.load_tables(tables).tables.has_index()
 
         # Tables not in tc, but rebuilt
-        assert (
-            tskit.TreeSequence.load_tables(tables, build_indexes=True)
-            .dump_tables()
-            .has_index()
-        )
+        assert tskit.TreeSequence.load_tables(
+            tables, build_indexes=True
+        ).tables.has_index()
 
         tables.build_index()
         # Tables in tc, not rebuilt
-        assert (
-            tskit.TreeSequence.load_tables(tables, build_indexes=False)
-            .dump_tables()
-            .has_index()
-        )
+        assert tskit.TreeSequence.load_tables(
+            tables, build_indexes=False
+        ).tables.has_index()
         # Tables in tc, and rebuilt
-        assert tskit.TreeSequence.load_tables(tables).dump_tables().has_index()
+        assert tskit.TreeSequence.load_tables(tables).tables.has_index()
 
     @pytest.mark.parametrize("ts", tsutil.get_example_tree_sequences())
     def test_html_repr(self, ts):
@@ -1943,14 +1954,14 @@ class TestTreeSequence(HighLevelTestCase):
         assert "Could not parse provenance" in ts._repr_html_()
 
     def test_provenance_summary_html(self, ts_fixture):
-        tables = ts_fixture.tables
+        tables = ts_fixture.dump_tables()
         for _ in range(20):
             # Add a row with isotimestamp
             tables.provenances.add_row("foo", "bar")
         assert "... 15 more" in tables.tree_sequence()._repr_html_()
 
     def test_html_repr_limit(self, ts_fixture):
-        tables = ts_fixture.tables
+        tables = ts_fixture.dump_tables()
         d = {n: n for n in range(50)}
         d[0] = "N" * 200
         tables.metadata = d
@@ -2427,6 +2438,126 @@ class TestTreeSequence(HighLevelTestCase):
         ):
             ts.impute_unknown_mutations_time(method="foobar")
 
+    @pytest.mark.parametrize(
+        "mutations, error",
+        [
+            ([], None),
+            (
+                [{"node": 0, "parent": -1}, {"node": 1, "parent": -1}],
+                None,
+            ),  # On parallel branches, no parents
+            (
+                [
+                    {"node": 4, "parent": -1},
+                    {"node": 0, "parent": 0},
+                    {"node": 1, "parent": 0},
+                ],
+                None,
+            ),  # On parallel branches, legal parent
+            (
+                [{"node": 0, "parent": -1}, {"node": 0, "parent": 0}],
+                None,
+            ),  # On same node
+            (
+                [{"node": 0, "parent": -1}, {"node": 0, "parent": -1}],
+                "not consistent with the topology",
+            ),  # On same node without parents
+            (
+                [
+                    {"node": 3, "parent": -1},
+                    {"node": 0, "parent": 0},
+                    {"node": 1, "parent": 0},
+                ],
+                "not consistent with the topology",
+            ),  # On parallel branches, parent on parallel branches
+            (
+                [
+                    {"node": 5, "parent": -1},
+                    {"node": 0, "parent": 0},
+                    {"node": 1, "parent": 0},
+                ],
+                "not consistent with the topology",
+            ),  # On parallel branches, parent high on parallel
+            (
+                [
+                    {"node": 3, "parent": -1},
+                    {"node": 0, "parent": 0},
+                    {"node": 7, "parent": 0},
+                ],
+                "not consistent with the topology",
+            ),  # On parallel branches, parent on different root
+            (
+                [
+                    {"node": 0, "parent": -1},
+                    {"node": 1, "parent": 0},
+                ],
+                "not consistent with the topology",
+            ),  # parent on parallel branch
+            (
+                [
+                    {"node": 6, "parent": -1},
+                    {"node": 6, "parent": 0},
+                ],
+                None,
+            ),  # parent above root
+            (
+                [
+                    {"node": 6, "parent": -1},
+                    {"node": 6, "parent": -1},
+                ],
+                "not consistent with the topology",
+            ),  # parent above root, no parents
+        ],
+    )
+    def test_mutation_parent_errors(self, mutations, error):
+        tables = tskit.TableCollection(sequence_length=1)
+        tables.nodes.add_row(time=0, flags=tskit.NODE_IS_SAMPLE)
+        tables.nodes.add_row(time=0, flags=tskit.NODE_IS_SAMPLE)
+        tables.nodes.add_row(time=0, flags=tskit.NODE_IS_SAMPLE)
+        tables.nodes.add_row(time=0, flags=tskit.NODE_IS_SAMPLE)
+        tables.nodes.add_row(time=1)
+        tables.nodes.add_row(time=1)
+        tables.nodes.add_row(time=2)
+        tables.nodes.add_row(time=3)
+        tables.edges.add_row(left=0, right=1, parent=4, child=0)
+        tables.edges.add_row(left=0, right=1, parent=4, child=1)
+        tables.edges.add_row(left=0, right=1, parent=5, child=2)
+        tables.edges.add_row(left=0, right=1, parent=5, child=3)
+        tables.edges.add_row(left=0, right=1, parent=6, child=4)
+        tables.edges.add_row(left=0, right=1, parent=6, child=5)
+        tables.sites.add_row(position=0.5, ancestral_state="A")
+
+        for mut in mutations:
+            tables.mutations.add_row(**{"derived_state": "G", "site": 0, **mut})
+
+        if error is not None:
+            with pytest.raises(_tskit.LibraryError, match=error):
+                tables.tree_sequence()
+        else:
+            tables.tree_sequence()
+
+    def test_union(self, ts_fixture):
+        # most of the union tests are in test_tables.py, here we just sanity check
+        tables = ts_fixture.dump_tables()
+        tables.migrations.clear()  # migrations not supported in union()
+        ts = tables.tree_sequence()
+        tables = tskit.TableCollection(ts.sequence_length)
+        tables.time_units = ts.time_units
+        empty = tables.tree_sequence()
+        union_ts = empty.union(
+            ts,
+            node_mapping=np.full(ts.num_nodes, tskit.NULL, dtype=int),
+            all_edges=True,
+            all_mutations=True,
+            check_shared_equality=False,
+        )
+        union_ts.tables.assert_equals(
+            ts.tables,
+            ignore_metadata=True,
+            ignore_reference_sequence=True,
+            ignore_provenance=True,
+        )
+
 
 class TestSimplify:
     # This class was factored out of the old TestHighlevel class 2022-12-13,
@@ -2543,7 +2674,8 @@ class TestSimplify:
             tables = ts.dump_tables()
             tables.simplify(samples=samples)
             tables.assert_equals(
-                ts.simplify(samples=samples).tables, ignore_timestamps=True
+                ts.simplify(samples=samples).dump_tables(),
+                ignore_timestamps=True,
             )
 
     @pytest.mark.parametrize("ts", tsutil.get_example_tree_sequences())
@@ -2707,6 +2839,8 @@ class TestSiteAlleles:
         tables.nodes.add_row(1, 0)  # will not have any mutations => missing
         for j in range(k):
             tables.mutations.add_row(site=0, node=0, derived_state=str(j))
+        tables.build_index()
+        tables.compute_mutation_parents()
         ts = tables.tree_sequence()
         variant = next(ts.variants())
         assert variant.has_missing_data
@@ -3396,7 +3530,12 @@ class TestTreeSequenceTextIO(HighLevelTestCase):
                 sequence_length=ts1.sequence_length,
                 strict=True,
             )
-            self.verify_approximate_equality(ts1, ts2)
+            tables1 = ts1.tables.copy()
+            # load_text performs a `sort`, which changes the order relative to
+            # the original tree sequence
+            tables1.sort()
+            ts1_sorted = tables1.tree_sequence()
+            self.verify_approximate_equality(ts1_sorted, ts2)
 
     def test_empty_files(self):
         nodes_file = io.StringIO("is_sample\ttime\n")
@@ -3838,7 +3977,8 @@ class TestTree(HighLevelTestCase):
         with pytest.warns(FutureWarning, match="Tree.tree_sequence.num_nodes"):
             t1.num_nodes
 
-    def test_seek_index(self):
+    @pytest.mark.parametrize("skip", [False, True])
+    def test_seek_index(self, skip):
         ts = msprime.simulate(10, recombination_rate=3, length=5, random_seed=42)
         N = ts.num_trees
         assert ts.num_trees > 3
@@ -3847,18 +3987,23 @@ class TestTree(HighLevelTestCase):
             fresh_tree = tskit.Tree(ts)
             assert fresh_tree.index == -1
             fresh_tree.seek_index(index)
-            tree.seek_index(index)
             assert fresh_tree.index == index
-            assert tree.index == index
+            tree.seek_index(index, skip)
+            assert_trees_equivalent(fresh_tree, tree)
 
         tree = tskit.Tree(ts)
         for index in [-1, -2, -N + 2, -N + 1, -N]:
             fresh_tree = tskit.Tree(ts)
             assert fresh_tree.index == -1
             fresh_tree.seek_index(index)
-            tree.seek_index(index)
+            tree.seek_index(index, skip)
             assert fresh_tree.index == index + N
             assert tree.index == index + N
+            assert_trees_equivalent(fresh_tree, tree)
+
+    def test_seek_index_errors(self):
+        tree = self.get_tree()
+        N = tree.tree_sequence.num_trees
         with pytest.raises(IndexError):
             tree.seek_index(N)
         with pytest.raises(IndexError):
@@ -3886,7 +4031,7 @@ class TestTree(HighLevelTestCase):
 
     def test_eq_different_tree_sequence(self):
         ts = msprime.simulate(4, recombination_rate=1, length=2, random_seed=42)
-        copy = ts.tables.tree_sequence()
+        copy = ts.dump_tables().tree_sequence()
         for tree1, tree2 in zip(ts.aslist(), copy.aslist()):
             assert tree1 != tree2
 
@@ -4373,11 +4518,21 @@ class TestNodeOrdering(HighLevelTestCase):
 def assert_trees_identical(t1, t2):
     assert t1.tree_sequence == t2.tree_sequence
     assert t1.index == t2.index
-    assert np.all(t1.parent_array == t2.parent_array)
-    assert np.all(t1.left_child_array == t2.left_child_array)
-    assert np.all(t1.left_sib_array == t2.left_sib_array)
-    assert np.all(t1.right_child_array == t2.right_child_array)
-    assert np.all(t1.right_sib_array == t2.right_sib_array)
+    assert_array_equal(t1.parent_array, t2.parent_array)
+    assert_array_equal(t1.left_child_array, t2.left_child_array)
+    assert_array_equal(t1.left_sib_array, t2.left_sib_array)
+    assert_array_equal(t1.right_child_array, t2.right_child_array)
+    assert_array_equal(t1.right_sib_array, t2.right_sib_array)
+
+
+def assert_trees_equivalent(t1, t2):
+    assert t1.tree_sequence == t2.tree_sequence
+    assert t1.index == t2.index
+    assert_array_equal(t1.parent_array, t2.parent_array)
+    assert_array_equal(t1.edge_array, t2.edge_array)
+    for u in range(t1.tree_sequence.num_nodes):
+        # this isn't fully testing the data model, but that's done elsewhere
+        assert sorted(t1.children(u)) == sorted(t2.children(u))
 
 
 def assert_same_tree_different_order(t1, t2):
@@ -4431,8 +4586,9 @@ class TestSeekDirection:
         ts = self.ts()
         t1 = tskit.Tree(ts)
         t2 = tskit.Tree(ts)
-        # Note: for development we can monkeypatch in the Python implementation
-        # above like this:
+        # # Note: for development we can monkeypatch in the Python implementation
+        # # above like this:
+        # import functools
         # t2.seek = functools.partial(seek, t2)
         return t1, t2
 
@@ -4453,64 +4609,80 @@ class TestSeekDirection:
         t1.clear()
         t1.seek(position)
         t2.first()
-        t2.seek(position)
+        t2.seek(position, skip=False)
         assert_trees_identical(t1, t2)
 
+    @pytest.mark.parametrize("position", [0, 1, 2, 3])
+    def test_skip_from_null(self, position):
+        t1, t2 = self.get_tree_pair()
+        t1.clear()
+        t1.seek(position)
+        t2.first()
+        t2.seek(position, skip=True)
+        assert_trees_equivalent(t1, t2)
+
     @pytest.mark.parametrize("index", range(3))
-    def test_seek_next_tree(self, index):
+    @pytest.mark.parametrize("skip", [False, True])
+    def test_seek_next_tree(self, index, skip):
         t1, t2 = self.get_tree_pair()
         while t1.index != index:
             t1.next()
             t2.next()
         t1.next()
-        t2.seek(index + 1)
+        t2.seek(index + 1, skip=skip)
         assert_trees_identical(t1, t2)
 
     @pytest.mark.parametrize("index", [3, 2, 1])
-    def test_seek_prev_tree(self, index):
+    @pytest.mark.parametrize("skip", [False, True])
+    def test_seek_prev_tree(self, index, skip):
         t1, t2 = self.get_tree_pair()
         while t1.index != index:
             t1.prev()
             t2.prev()
         t1.prev()
-        t2.seek(index - 1)
+        t2.seek(index - 1, skip=skip)
         assert_trees_identical(t1, t2)
 
-    def test_seek_1_from_0(self):
+    @pytest.mark.parametrize("skip", [False, True])
+    def test_seek_1_from_0(self, skip):
         t1, t2 = self.get_tree_pair()
         t1.first()
         t1.next()
         t2.first()
-        t2.seek(1)
+        t2.seek(1, skip)
         assert_trees_identical(t1, t2)
 
-    def test_seek_1_5_from_0(self):
+    @pytest.mark.parametrize("skip", [False, True])
+    def test_seek_1_5_from_0(self, skip):
         t1, t2 = self.get_tree_pair()
         t1.first()
         t1.next()
         t2.first()
-        t2.seek(1.5)
+        t2.seek(1.5, skip)
         assert_trees_identical(t1, t2)
 
-    def test_seek_1_5_from_1(self):
+    @pytest.mark.parametrize("skip", [False, True])
+    def test_seek_1_5_from_1(self, skip):
         t1, t2 = self.get_tree_pair()
         for _ in range(2):
             t1.next()
             t2.next()
-        t2.seek(1.5)
+        t2.seek(1.5, skip)
         assert_trees_identical(t1, t2)
 
-    def test_seek_3_from_null(self):
+    @pytest.mark.parametrize("skip", [False, True])
+    def test_seek_3_from_null(self, skip):
         t1, t2 = self.get_tree_pair()
         t1.last()
-        t2.seek(3)
+        t2.seek(3, skip)
         assert_trees_identical(t1, t2)
 
-    def test_seek_3_from_null_prev(self):
+    @pytest.mark.parametrize("skip", [False, True])
+    def test_seek_3_from_null_prev(self, skip):
         t1, t2 = self.get_tree_pair()
         t1.last()
         t1.prev()
-        t2.seek(3)
+        t2.seek(3, skip)
         t2.prev()
         assert_trees_identical(t1, t2)
 
@@ -4520,6 +4692,21 @@ class TestSeekDirection:
         t2.first()
         t2.seek(3)
         assert_trees_identical(t1, t2)
+
+    def test_skip_3_from_0(self):
+        t1, t2 = self.get_tree_pair()
+        t1.last()
+        t2.first()
+        t2.seek(3, True)
+        assert_trees_equivalent(t1, t2)
+
+    def test_skip_0_from_3(self):
+        t1, t2 = self.get_tree_pair()
+        t1.last()
+        t1.first()
+        t2.last()
+        t2.seek(0, True)
+        assert_trees_equivalent(t1, t2)
 
     def test_seek_0_from_3(self):
         t1, t2 = self.get_tree_pair()
@@ -4545,8 +4732,18 @@ class TestSeekDirection:
             else:
                 while t2.index != index:
                     t2.prev()
-            assert t1.index == t2.index
-            assert np.all(t1.parent_array == t2.parent_array)
+            assert_trees_equivalent(t1, t2)
+
+    @pytest.mark.parametrize("ts", tsutil.get_example_tree_sequences())
+    def test_seek_skip_middle(self, ts):
+        breakpoints = ts.breakpoints(as_array=True)
+        mid = breakpoints[:-1] + np.diff(breakpoints) / 2
+        for _, x in enumerate(mid[:-1]):
+            t1 = tskit.Tree(ts)
+            t1.seek(x, skip=False)
+            t2 = tskit.Tree(ts)
+            t2.seek(x, skip=True)
+            assert_trees_equivalent(t1, t2)
 
     @pytest.mark.parametrize("ts", tsutil.get_example_tree_sequences())
     def test_seek_last_then_prev(self, ts):
@@ -5383,9 +5580,42 @@ class TestRaggedArrays:
             [mutation.derived_state for mutation in ts.mutations()],
         )
 
+    @pytest.mark.skipif(not _tskit.HAS_NUMPY_2, reason="Requires NumPy 2.0 or higher")
+    @pytest.mark.parametrize("ts", tsutil.get_example_tree_sequences())
+    def test_equality_mutations_inherited_state(self, ts):
+        assert_array_equal(
+            ts.mutations_inherited_state,
+            [mutation.inherited_state for mutation in ts.mutations()],
+        )
+
+    @pytest.mark.skipif(not _tskit.HAS_NUMPY_2, reason="Requires NumPy 2.0 or higher")
+    @pytest.mark.parametrize("ts", tsutil.get_example_tree_sequences())
+    def test_mutations_inherited_state(self, ts):
+        inherited_state = ts.mutations_inherited_state
+        assert len(inherited_state) == ts.num_mutations
+        assert isinstance(inherited_state, np.ndarray)
+        assert inherited_state.shape == (ts.num_mutations,)
+        assert inherited_state.dtype == np.dtype("T")
+        assert inherited_state.size == ts.num_mutations
+
+        for mut in ts.mutations():
+            state0 = ts.site(mut.site).ancestral_state
+            if mut.parent != -1:
+                state0 = ts.mutation(mut.parent).derived_state
+            assert state0 == inherited_state[mut.id]
+
+        # Test caching - second access should return the same object
+        inherited_state2 = ts.mutations_inherited_state
+        assert inherited_state is inherited_state2
+
     @pytest.mark.skipif(_tskit.HAS_NUMPY_2, reason="Test only on Numpy 1.X")
     @pytest.mark.parametrize(
-        "column", ["sites_ancestral_state", "mutations_derived_state"]
+        "column",
+        [
+            "sites_ancestral_state",
+            "mutations_derived_state",
+            "mutations_inherited_state",
+        ],
     )
     def test_ragged_array_not_supported(self, column):
         tables = tskit.TableCollection(sequence_length=100)
@@ -5396,6 +5626,21 @@ class TestRaggedArrays:
             match="requires numpy 2.0",
         ):
             getattr(ts, column)
+
+    @pytest.mark.skipif(_tskit.HAS_NUMPY_2, reason="Test only on Numpy 1.X")
+    def test_tables_emits_warning(self):
+        tables = tskit.TableCollection(sequence_length=1)
+        ts = tables.tree_sequence()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", UserWarning)
+            result = ts.tables
+
+        assert isinstance(result, tskit.TableCollection)
+        assert len(caught) == 1
+        warning = caught[0]
+        assert warning.category is UserWarning
+        assert "Immutable table views require tskit" in str(warning.message)
 
 
 class TestSampleNodesByPloidy:

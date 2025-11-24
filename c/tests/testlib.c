@@ -97,17 +97,19 @@ const char *paper_ex_individuals = "0      0.2,1.5    -1,-1\n"
 
 /*** An example of a nonbinary tree sequence ***/
 /*
-0.41┊          12     ┊         12      ┊
-    ┊           ┃     ┊          ┃      ┊
-0.28┊           ┃     ┊          ┃      ┊
-    ┊           ┃     ┊          ┃      ┊
-0.13┊          10     ┊         10      ┊
-    ┊         ┏━╋━┓   ┊         ┏┻┓     ┊
-0.07┊         ┃ ┃ ┃   ┊         ┃ ┃     ┊
-    ┊         ┃ ┃ ┃   ┊         ┃ ┃     ┊
-0.01┊         ┃ ┃ ┃   ┊         ┃ ┃     ┊
-    ┊         ┃ ┃ ┃   ┊         ┃ ┃     ┊
-0.00┊ 0 1 2 3 4 5 7 6 ┊ 0 1 2 3 4 7 5 6 ┊
+0.41┊         12      ┊          12     ┊
+    ┊       ┏━━┻━━┓   ┊         ┏━┻━━┓  ┊
+0.28┊       ┃     ┃   ┊        11    ┃  ┊
+    ┊       ┃     ┃   ┊       ┏━┻━┓  ┃  ┊
+0.13┊       ┃    10   ┊       ┃   ┃ 10  ┊
+    ┊       ┃   ┏━╋━┓ ┊       ┃   ┃ ┏┻┓ ┊
+0.07┊       9   ┃ ┃ ┃ ┊       9   ┃ ┃ ┃ ┊
+    ┊    ┏━━┻━┓ ┃ ┃ ┃ ┊    ┏━━┻━┓ ┃ ┃ ┃ ┊
+0.01┊    8    ┃ ┃ ┃ ┃ ┊    8    ┃ ┃ ┃ ┃ ┊
+    ┊ ┏━┳┻┳━┓ ┃ ┃ ┃ ┃ ┊ ┏━┳┻┳━┓ ┃ ┃ ┃ ┃ ┊
+0.00┊ 0 1 2 3 6 4 5 7 ┊ 0 1 2 3 6 5 4 7 ┊
+    0                17                100
+
 */
 const char *nonbinary_ex_nodes = "1  0       0   -1\n"
                                  "1  0       0   -1\n"
@@ -136,20 +138,21 @@ const char *nonbinary_ex_sites = "1  0\n"
 const char *nonbinary_ex_mutations = "0    2   1\n"
                                      "1    11  1";
 
-/*** An example of a tree sequence with unary nodes. ***/
+/*** An example of a tree sequence with unary nodes
+ *   and also a non-sample leaf (node 9). ***/
 /*
-0.25┊     8   ┊   8     ┊         ┊
-    ┊   ┏━┻━┓ ┊   ┃     ┊         ┊
-0.20┊   ┃   7 ┊   ┃     ┊   7     ┊
-    ┊   ┃   ┃ ┊   ┃     ┊ ┏━┻━┓   ┊
-0.17┊   6   ┃ ┊   6     ┊ ┃   ┃   ┊
-    ┊ ┏━┻┓  ┃ ┊ ┏━┻━┓   ┊ ┃   ┃   ┊
-0.09┊ ┃  5  ┃ ┊ ┃   5   ┊ ┃   5   ┊
-    ┊ ┃ ┏┻┓ ┃ ┊ ┃ ┏━┻┓  ┊ ┃ ┏━┻┓  ┊
-0.07┊ ┃ ┃ ┃ ┃ ┊ ┃ ┃  4  ┊ ┃ ┃  4  ┊
-    ┊ ┃ ┃ ┃ ┃ ┊ ┃ ┃ ┏┻┓ ┊ ┃ ┃ ┏┻┓ ┊
-0.00┊ 0 1 3 2 ┊ 0 1 2 3 ┊ 0 1 2 3 ┊
-  0.00      2.00      7.00      10.00
+0.25┊      8    ┊   8       ┊           ┊         ┊
+    ┊   ┏━━┻━━┓ ┊   ┃       ┊           ┊         ┊
+0.20┊   ┃     7 ┊   ┃       ┊   7       ┊         ┊
+    ┊   ┃     ┃ ┊   ┃       ┊ ┏━┻━━┓    ┊         ┊
+0.17┊   6     ┃ ┊   6       ┊ ┃    ┃    ┊         ┊
+    ┊ ┏━┻━┓   ┃ ┊ ┏━┻━━┓    ┊ ┃    ┃    ┊         ┊
+0.09┊ ┃   5   ┃ ┊ ┃    5    ┊ ┃    5    ┊         ┊
+    ┊ ┃ ┏━╋━┓ ┃ ┊ ┃ ┏━━╋━━┓ ┊ ┃ ┏━━╋━━┓ ┊         ┊
+0.07┊ ┃ ┃ ┃ ┃ ┃ ┊ ┃ ┃  4  ┃ ┊ ┃ ┃  4  ┃ ┊         ┊
+    ┊ ┃ ┃ ┃ ┃ ┃ ┊ ┃ ┃ ┏┻┓ ┃ ┊ ┃ ┃ ┏┻┓ ┃ ┊         ┊
+0.00┊ 0 1 3 9 2 ┊ 0 1 2 3 9 ┊ 0 1 2 3 9 ┊ 0 1 2 3 ┊
+    0           2           7          10        100
 */
 const char *unary_ex_nodes = "1  0       0  -1\n"
                              "1  0       0  -1\n"
@@ -159,11 +162,13 @@ const char *unary_ex_nodes = "1  0       0  -1\n"
                              "0  0.090   0  -1\n"
                              "0  0.170   0  -1\n"
                              "0  0.202   0  -1\n"
-                             "0  0.253   0  -1\n";
+                             "0  0.253   0  -1\n"
+                             "0  0       0  -1\n";
 const char *unary_ex_edges = "2 10 4 2,3\n"
                              "0 10 5 1\n"
                              "0 2  5 3\n"
                              "2 10 5 4\n"
+                             "0 10 5 9\n"
                              "0 7  6 0,5\n"
                              "7 10 7 0\n"
                              "0 2  7 2\n"
@@ -177,6 +182,7 @@ const char *unary_ex_sites = "1.0    0\n"
                              "8.5    0\n";
 const char *unary_ex_mutations = "0    2   1\n"
                                  "1    6   1\n"
+                                 "1    9   0\n"
                                  "2    5   1\n";
 
 /* An example of a simple tree sequence with multiple marginal trees. */
@@ -767,6 +773,8 @@ tsk_treeseq_from_text(tsk_treeseq_t *ts, double sequence_length, const char *nod
     tsk_table_collection_t tables;
     tsk_id_t max_population_id;
     tsk_size_t j;
+    tsk_flags_t ts_flags;
+    bool all_parents_null;
 
     CU_ASSERT_FATAL(ts != NULL);
     CU_ASSERT_FATAL(nodes != NULL);
@@ -807,7 +815,21 @@ tsk_treeseq_from_text(tsk_treeseq_t *ts, double sequence_length, const char *nod
         }
     }
 
-    ret = tsk_treeseq_init(ts, &tables, TSK_TS_INIT_BUILD_INDEXES);
+    /* If all mutation.parent are TSK_NULL, use TSK_TS_COMPUTE_MUTATION_PARENTS flag too
+     */
+    ts_flags = TSK_TS_INIT_BUILD_INDEXES;
+    all_parents_null = true;
+    for (j = 0; j < tables.mutations.num_rows; j++) {
+        if (tables.mutations.parent[j] != TSK_NULL) {
+            all_parents_null = false;
+            break;
+        }
+    }
+    if (all_parents_null) {
+        ts_flags |= TSK_TS_INIT_COMPUTE_MUTATION_PARENTS;
+    }
+
+    ret = tsk_treeseq_init(ts, &tables, ts_flags);
     /* tsk_treeseq_print_state(ts, stdout); */
     if (ret != 0) {
         printf("\nret = %s\n", tsk_strerror(ret));
