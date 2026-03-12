@@ -1,6 +1,26 @@
-----------
-Unreleased
-----------
+--------------------
+[1.3.2] - 2026-XX-XX
+--------------------
+
+In development
+
+- Add ``tsk_json_struct_metadata_get_blob`` function
+  (:user:`benjeffery`, :pr:`3306`)
+
+--------------------
+[1.3.1] - 2026-03-06
+--------------------
+
+Maintenance release.
+
+- Update to kastore 2.1.2
+- Fix doc typo for file uuid (:pr:`3399`)
+- Migrate linting to clang-format 21.1.8 (:pr:`3389`)
+- Support compile time setting of debug stream (:pr:`3364`)
+
+--------------------
+[1.3.0] - 2025-11-27
+--------------------
 
 **Breaking changes**
 
@@ -12,13 +32,13 @@ Unreleased
 **Features**
 
 - ``tsk_variant_init`` and associated variant decoding methods now
-  fully support TSK_ISOLATED_NOT_MISSING not being set for internal nodes.
+  fully support ``TSK_ISOLATED_NOT_MISSING`` not being set for internal nodes.
   (:user:`benjeffery`, :pr:`3313`)
 
 - Add ``tsk_treeseq_decode_alignments`` to decode full-length reference-based
   sequence alignments for specified nodes over a genomic interval, respecting
   ``TSK_ISOLATED_NOT_MISSING`` semantics.
-  (:user:`benjeffery` , :pr:`3324`, :issue:`3319`)
+  (:user:`benjeffery`, :pr:`3324`, :issue:`3319`)
 
 
 --------------------
@@ -32,7 +52,7 @@ Unreleased
 
 - ``tsk_treeseq_init`` now requires that mutation parents in the table collection
   are correct and consistent with the topology of the tree at each mutation site.
-  Returns ``TSK_ERR_BAD_MUTATION_PARENT`` if this is not the case, or 
+  Returns ``TSK_ERR_BAD_MUTATION_PARENT`` if this is not the case, or
   ``TSK_ERR_MUTATION_PARENT_AFTER_CHILD`` if the mutations are not in an order
   compatible with the correct mutation parent.
   (:user:`benjeffery`, :issue:`2729`, :issue:`2732`, :pr:`3212`).

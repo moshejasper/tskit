@@ -23,6 +23,7 @@
 """
 A collection of utilities to edit and construct tree sequences.
 """
+
 import collections
 import dataclasses
 import functools
@@ -30,7 +31,6 @@ import json
 import random
 import string
 import struct
-import typing
 
 import msprime
 import numpy as np
@@ -1718,7 +1718,7 @@ class Interval:
 class EdgeRange:
     start: int
     stop: int
-    order: typing.List
+    order: list
 
 
 class TreeIndexes:
@@ -2164,7 +2164,7 @@ def metadata_map(tables):
     return out
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def all_trees_ts(n):
     """
     Generate a tree sequence that corresponds to the lexicographic listing

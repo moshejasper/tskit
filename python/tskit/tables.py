@@ -24,6 +24,7 @@
 """
 Tree sequence IO via the tables API.
 """
+
 import collections
 import dataclasses
 import datetime
@@ -32,9 +33,6 @@ import numbers
 import operator
 import warnings
 from dataclasses import dataclass
-from typing import Dict
-from typing import Optional
-from typing import Union
 
 import numpy as np
 
@@ -84,7 +82,7 @@ class IndividualTableRow(util.Dataclass):
     """
     See :attr:`Individual.parents`
     """
-    metadata: Optional[Union[bytes, dict]]
+    metadata: bytes | dict | None
     """
     See :attr:`Individual.metadata`
     """
@@ -124,7 +122,7 @@ class NodeTableRow(util.Dataclass):
     """
     See :attr:`Node.individual`
     """
-    metadata: Optional[Union[bytes, dict]]
+    metadata: bytes | dict | None
     """
     See :attr:`Node.metadata`
     """
@@ -154,7 +152,7 @@ class EdgeTableRow(util.Dataclass):
     """
     See :attr:`Edge.child`
     """
-    metadata: Optional[Union[bytes, dict]]
+    metadata: bytes | dict | None
     """
     See :attr:`Edge.metadata`
     """
@@ -192,7 +190,7 @@ class MigrationTableRow(util.Dataclass):
     """
     See :attr:`Migration.time`
     """
-    metadata: Optional[Union[bytes, dict]]
+    metadata: bytes | dict | None
     """
     See :attr:`Migration.metadata`
     """
@@ -214,7 +212,7 @@ class SiteTableRow(util.Dataclass):
     """
     See :attr:`Site.ancestral_state`
     """
-    metadata: Optional[Union[bytes, dict]]
+    metadata: bytes | dict | None
     """
     See :attr:`Site.metadata`
     """
@@ -244,7 +242,7 @@ class MutationTableRow(util.Dataclass):
     """
     See :attr:`Mutation.parent`
     """
-    metadata: Optional[Union[bytes, dict]]
+    metadata: bytes | dict | None
     """
     See :attr:`Mutation.metadata`
     """
@@ -264,9 +262,7 @@ class MutationTableRow(util.Dataclass):
             and self.metadata == other.metadata
             and (
                 self.time == other.time
-                or (
-                    util.is_unknown_time(self.time) and util.is_unknown_time(other.time)
-                )
+                or (util.is_unknown_time(self.time) and util.is_unknown_time(other.time))
             )
         )
 
@@ -279,7 +275,7 @@ class PopulationTableRow(util.Dataclass):
     """
 
     __slots__ = ["metadata"]
-    metadata: Optional[Union[bytes, dict]]
+    metadata: bytes | dict | None
     """
     See :attr:`Population.metadata`
     """
@@ -379,9 +375,7 @@ class BaseTable:
         nbytes += sum(col.nbytes for col in d.values())
         return nbytes
 
-    def _equals_internal(
-        self, other, ignore_metadata=False, *, ignore_timestamps=False
-    ):
+    def _equals_internal(self, other, ignore_metadata=False, *, ignore_timestamps=False):
 
         if self is other:
             return True
@@ -579,9 +573,7 @@ class BaseTable:
                     elif col in ["location", "parents"]:
                         # Array columns - join with commas
                         if col == "parents":
-                            formatted_values.append(
-                                ", ".join([f"{p:,}" for p in value])
-                            )
+                            formatted_values.append(", ".join([f"{p:,}" for p in value]))
                         else:
                             formatted_values.append(", ".join(map(str, value)))
                     elif col in float_columns:
@@ -2737,8 +2729,8 @@ class ProvenanceTable(MutableBaseTable):
 @dataclasses.dataclass(eq=True, order=True)
 class IdentitySegment:
     """
-    A single segment of identity spanning a genomic interval for a
-    a specific ancestor node.
+    A single segment of identity by descent spanning a genomic interval
+    for a specific ancestor node.
     """
 
     left: float
@@ -2758,7 +2750,7 @@ class IdentitySegment:
 
 class IdentitySegmentList(collections.abc.Iterable, collections.abc.Sized):
     """
-    A summary of identity segments for some pair of samples in a
+    A summary of identity-by-descent segments for some pair of samples in a
     :class:`.IdentitySegments` result. If the ``store_segments`` argument
     has been specified to :meth:`.TreeSequence.ibd_segments`, this class
     can be treated as a sequence of :class:`.IdentitySegment` objects.
@@ -2769,7 +2761,9 @@ class IdentitySegmentList(collections.abc.Iterable, collections.abc.Sized):
 
     If ``store_segments`` is False, only the overall summary values
     such as :attr:`.IdentitySegmentList.total_span` and ``len()`` are
-    available.
+    available. Attempting to iterate over the list or access per-segment
+    arrays (``left``, ``right``, or ``node``) in this case will raise an
+    ``IdentitySegmentsNotStoredError``.
 
     .. warning:: The order of segments within an IdentitySegmentList is
         arbitrary and may change in the future
@@ -2833,7 +2827,7 @@ class IdentitySegmentList(collections.abc.Iterable, collections.abc.Sized):
 class IdentitySegments(collections.abc.Mapping):
     """
     A class summarising and optionally storing the segments of identity
-    by state returned by :meth:`.TreeSequence.ibd_segments`. See the
+    by descent returned by :meth:`.TreeSequence.ibd_segments`. See the
     :ref:`sec_identity` for more information and examples.
 
     Along with the documented methods and attributes, the class supports
@@ -2845,9 +2839,10 @@ class IdentitySegments(collections.abc.Mapping):
        for a given instance of this class are determined by the
        ``store_pairs`` and ``store_segments`` arguments provided to
        :meth:`.TreeSequence.ibd_segments`. For example, attempting
-       to access per-sample pair information if ``store_pairs``
-       is False will result in a (hopefully informative) error being
-       raised.
+       to access per-sample pair information (such as indexing with
+       ``[(a, b)]``, iterating over the mapping, or accessing
+       :attr:`.IdentitySegments.pairs`) if ``store_pairs`` is False will
+       result in an ``IdentityPairsNotStoredError`` being raised.
 
     .. warning:: This class should not be instantiated directly.
     """
@@ -3018,12 +3013,11 @@ class ReferenceSequence(metadata.MetadataProvider):
 
         if self.data != other.data:
             raise AssertionError(
-                f"Reference sequence data differs: self={self.data} "
-                f"other={other.data}"
+                f"Reference sequence data differs: self={self.data} other={other.data}"
             )
         if self.url != other.url:
             raise AssertionError(
-                f"Reference sequence url differs: self={self.url} " f"other={other.url}"
+                f"Reference sequence url differs: self={self.url} other={other.url}"
             )
 
     @property
@@ -3244,7 +3238,7 @@ class TableCollection(metadata.MetadataProvider):
         return self._ll_tables.asdict(force_offset_64)
 
     @property
-    def table_name_map(self) -> Dict:
+    def table_name_map(self) -> dict:
         """
         Returns a dictionary mapping table names to the corresponding
         table instances. For example, the returned dictionary will contain the
@@ -3262,7 +3256,7 @@ class TableCollection(metadata.MetadataProvider):
         }
 
     @property
-    def name_map(self) -> Dict:
+    def name_map(self) -> dict:
         # Deprecated in 0.4.1
         warnings.warn(
             "name_map is deprecated; use table_name_map instead",
@@ -3494,8 +3488,8 @@ class TableCollection(metadata.MetadataProvider):
         self.__init__()
         self._ll_tables.fromdict(state)
 
-    @classmethod
-    def fromdict(self, tables_dict):
+    @staticmethod
+    def fromdict(tables_dict):
         ll_tc = _tskit.TableCollection()
         ll_tc.fromdict(tables_dict)
         return TableCollection(ll_tables=ll_tc)
@@ -3807,7 +3801,8 @@ class TableCollection(metadata.MetadataProvider):
         """
         Sorts the individual table in place, so that parents come before children,
         and the parent column is remapped as required. Node references to individuals
-        are also updated.
+        are also updated. This is a stricter order than is required for a valid tree
+        sequence.
         """
         self._ll_tables.sort_individuals()
         # TODO add provenance
@@ -3816,9 +3811,11 @@ class TableCollection(metadata.MetadataProvider):
         """
         This puts the tables in *canonical* form, imposing a stricter order on the
         tables than :ref:`required <sec_valid_tree_sequence_requirements>` for
-        a valid tree sequence. In particular, the individual
-        and population tables are sorted by the first node that refers to each
-        (see :meth:`TreeSequence.subset`). Then, the remaining tables are sorted
+        a valid tree sequence. In particular, the population table is sorted to
+        place populations with the lowest node IDs first, and the individual table
+        is sorted firstly as in :meth:`.sort_individuals` and secondarily
+        by the lowest ID of the nodes that refer to each individual
+        (see :meth:`TreeSequence.subset`). The remaining tables are sorted
         as in :meth:`.sort`, with the modification that mutations are sorted by
         site, then time (if known), then the mutation's node's time, then number
         of descendant mutations (ensuring that parent mutations occur before
@@ -4015,9 +4012,7 @@ class TableCollection(metadata.MetadataProvider):
                 self.sites.position >= s, self.sites.position < e
             )
             keep_sites = np.logical_or(keep_sites, curr_keep_sites)
-            keep_edges = np.logical_not(
-                np.logical_or(edges.right <= s, edges.left >= e)
-            )
+            keep_edges = np.logical_not(np.logical_or(edges.right <= s, edges.left >= e))
             metadata, metadata_offset = keep_with_offset(
                 keep_edges, edges.metadata, edges.metadata_offset
             )
@@ -4780,6 +4775,21 @@ class ImmutableTableCollection(metadata.MetadataProvider):
             ]
         )
 
+    def link_ancestors(self, samples, ancestors):
+        """
+        See :meth:`TableCollection.link_ancestors`.
+        """
+        samples = util.safe_np_int_cast(samples, np.int32)
+        ancestors = util.safe_np_int_cast(ancestors, np.int32)
+        ll_edge_table = self._llts.link_ancestors(samples, ancestors)
+        return EdgeTable(ll_table=ll_edge_table)
+
+    def map_ancestors(self, *args, **kwargs):
+        """
+        Deprecated alias for :meth:`link_ancestors`.
+        """
+        return self.link_ancestors(*args, **kwargs)
+
     _MUTATOR_METHODS = {
         "clear",
         "sort",
@@ -4803,8 +4813,6 @@ class ImmutableTableCollection(metadata.MetadataProvider):
         "ibd_segments",
         "fromdict",
         "simplify",
-        "link_ancestors",
-        "map_ancestors",
     }
 
     def copy(self):

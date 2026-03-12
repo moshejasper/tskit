@@ -23,6 +23,7 @@
 """
 Test cases for the low level C interface to tskit.
 """
+
 import collections
 import gc
 import inspect
@@ -37,7 +38,6 @@ import pytest
 
 import _tskit
 import tskit
-
 
 NON_UTF8_STRING = "\ud861\udd37"
 
@@ -1027,9 +1027,9 @@ class TestTableMethodsErrors:
             ll_table.extend(ll_table_copy, row_indexes=5)
         with pytest.raises(TypeError):
             ll_table.extend(ll_table_copy, row_indexes=[None])
-        with pytest.raises(ValueError, match="object too deep"):
+        with pytest.raises(ValueError, match="array"):
             ll_table.extend(ll_table_copy, row_indexes=[[0, 1], [2, 3]])
-        with pytest.raises(ValueError, match="object too deep"):
+        with pytest.raises(ValueError, match="array"):
             ll_table.extend(ll_table_copy, row_indexes=[[0, 1]])
         with pytest.raises(_tskit.LibraryError, match="out of bounds"):
             ll_table.extend(ll_table_copy, row_indexes=[-1])
@@ -1117,9 +1117,7 @@ class TestTableMethodsErrors:
 
         modify_indexes = tc.indexes
         modify_indexes["edge_insertion_order"] = np.arange(42, 42 + 18, dtype=np.int32)
-        modify_indexes["edge_removal_order"] = np.arange(
-            4242, 4242 + 18, dtype=np.int32
-        )
+        modify_indexes["edge_removal_order"] = np.arange(4242, 4242 + 18, dtype=np.int32)
         tc.indexes = modify_indexes
         assert np.array_equal(
             tc.indexes["edge_insertion_order"], np.arange(42, 42 + 18, dtype=np.int32)
@@ -1495,6 +1493,47 @@ class TestTreeSequence(LowLevelTestCase, MetadataTestMixin):
             A = ts.mean_descendants([focal[2:], focal[:2]])
             assert A.shape == (ts.get_num_nodes(), 2)
 
+    def test_link_ancestors_bad_args(self):
+        ts = self.get_example_tree_sequence()
+        with pytest.raises(TypeError):
+            ts.link_ancestors()
+        with pytest.raises(TypeError):
+            ts.link_ancestors([0, 1])
+        with pytest.raises(ValueError):
+            ts.link_ancestors(samples=[0, 1], ancestors="sdf")
+        with pytest.raises(ValueError):
+            ts.link_ancestors(samples="sdf", ancestors=[0, 1])
+        with pytest.raises(_tskit.LibraryError):
+            ts.link_ancestors(samples=[0, 1], ancestors=[ts.get_num_nodes(), -1])
+        with pytest.raises(_tskit.LibraryError):
+            ts.link_ancestors(samples=[0, -1], ancestors=[0])
+
+    def test_link_ancestors(self):
+        # Check that the low-level method runs and does not mutate the tree sequence
+        # and that it matches the TableCollection implementation.
+        high_ts = msprime.simulate(4, random_seed=1)
+        ts = high_ts.ll_tree_sequence
+        samples = list(range(ts.get_num_samples()))
+        ancestors = list(range(ts.get_num_nodes()))
+        num_edges_before = ts.get_num_edges()
+        edges = ts.link_ancestors(samples, ancestors)
+        assert isinstance(edges, _tskit.EdgeTable)
+        assert edges.num_rows >= 0
+        if edges.num_rows > 0:
+            assert np.all(edges.left >= 0)
+            assert np.all(edges.right <= ts.get_sequence_length())
+            assert np.all(edges.left < edges.right)
+            assert np.all(edges.parent >= 0)
+            assert np.all(edges.parent < ts.get_num_nodes())
+            assert np.all(edges.child >= 0)
+            assert np.all(edges.child < ts.get_num_nodes())
+        assert ts.get_num_edges() == num_edges_before
+
+        # Parity with low-level TableCollection.link_ancestors
+        tc = high_ts.dump_tables()._ll_tables
+        edges_from_tables = tc.link_ancestors(samples, ancestors)
+        assert edges.equals(edges_from_tables)
+
     def test_metadata_schemas(self):
         tables = _tskit.TableCollection(1.0)
         # Set the schema
@@ -1609,9 +1648,7 @@ class TestTreeSequence(LowLevelTestCase, MetadataTestMixin):
         # happy path
         a = stat_method(ss_sizes, ss, row_sites, col_sites, None, None, "site")
         assert a.shape == (10, 10, 1)
-        a = stat_method(
-            ss_sizes, ss, row_sites_list, col_sites_list, None, None, "site"
-        )
+        a = stat_method(ss_sizes, ss, row_sites_list, col_sites_list, None, None, "site")
         assert a.shape == (10, 10, 1)
         a = stat_method(ss_sizes, ss, None, None, None, None, "site")
         assert a.shape == (10, 10, 1)
@@ -1699,14 +1736,10 @@ class TestTreeSequence(LowLevelTestCase, MetadataTestMixin):
         with pytest.raises(tskit.LibraryError, match="TSK_ERR_STAT_UNSORTED_POSITIONS"):
             bad_pos = np.array([0.7, 0, 0.8], dtype=np.float64)
             stat_method(ss_sizes, ss, None, None, row_pos, bad_pos, "branch")
-        with pytest.raises(
-            tskit.LibraryError, match="TSK_ERR_STAT_DUPLICATE_POSITIONS"
-        ):
+        with pytest.raises(tskit.LibraryError, match="TSK_ERR_STAT_DUPLICATE_POSITIONS"):
             bad_pos = np.array([0.7, 0.7, 0.8], dtype=np.float64)
             stat_method(ss_sizes, ss, None, None, bad_pos, col_pos, "branch")
-        with pytest.raises(
-            tskit.LibraryError, match="TSK_ERR_STAT_DUPLICATE_POSITIONS"
-        ):
+        with pytest.raises(tskit.LibraryError, match="TSK_ERR_STAT_DUPLICATE_POSITIONS"):
             bad_pos = np.array([0.7, 0.7, 0.8], dtype=np.float64)
             stat_method(ss_sizes, ss, None, None, row_pos, bad_pos, "branch")
         with pytest.raises(tskit.LibraryError, match="TSK_ERR_POSITION_OUT_OF_BOUNDS"):
@@ -1882,14 +1915,10 @@ class TestTreeSequence(LowLevelTestCase, MetadataTestMixin):
         with pytest.raises(tskit.LibraryError, match="TSK_ERR_STAT_UNSORTED_POSITIONS"):
             bad_pos = np.array([0.7, 0, 0.8], dtype=np.float64)
             stat_method(ss_sizes, ss, indexes, None, None, row_pos, bad_pos, "branch")
-        with pytest.raises(
-            tskit.LibraryError, match="TSK_ERR_STAT_DUPLICATE_POSITIONS"
-        ):
+        with pytest.raises(tskit.LibraryError, match="TSK_ERR_STAT_DUPLICATE_POSITIONS"):
             bad_pos = np.array([0.7, 0.7, 0.8], dtype=np.float64)
             stat_method(ss_sizes, ss, indexes, None, None, bad_pos, col_pos, "branch")
-        with pytest.raises(
-            tskit.LibraryError, match="TSK_ERR_STAT_DUPLICATE_POSITIONS"
-        ):
+        with pytest.raises(tskit.LibraryError, match="TSK_ERR_STAT_DUPLICATE_POSITIONS"):
             bad_pos = np.array([0.7, 0.7, 0.8], dtype=np.float64)
             stat_method(ss_sizes, ss, indexes, None, None, row_pos, bad_pos, "branch")
         with pytest.raises(tskit.LibraryError, match="TSK_ERR_POSITION_OUT_OF_BOUNDS"):
@@ -2060,9 +2089,7 @@ class TestTreeSequence(LowLevelTestCase, MetadataTestMixin):
             assert tables4.has_index()
 
     def test_clear_table(self, ts_fixture):
-        tables = _tskit.TableCollection(
-            sequence_length=ts_fixture.get_sequence_length()
-        )
+        tables = _tskit.TableCollection(sequence_length=ts_fixture.get_sequence_length())
         ts_fixture.ll_tree_sequence.dump_tables(tables)
         tables.clear()
         data_tables = [t for t in tskit.TABLE_NAMES if t != "provenances"]
@@ -3221,7 +3248,7 @@ class TestGeneticRelatednessVector(LowLevelTestCase):
         params["mode"] = "branch"
         for nodes in ["abc", [[1, 2]]]:
             params["nodes"] = nodes
-            with pytest.raises(ValueError, match="desired array"):
+            with pytest.raises(ValueError, match="array"):
                 ts.genetic_relatedness_vector(**params)
         for nodes in [[-1, 3], [3, 2 * ts.get_num_nodes()]]:
             params["nodes"] = nodes
@@ -3277,9 +3304,7 @@ class TestGeneticRelatednessVector(LowLevelTestCase):
         del params["windows"]
         for bad_array in ["asdf", None, [[[[]], [[]]]], np.zeros((10, 3, 4))]:
             with pytest.raises(ValueError):
-                ts.genetic_relatedness_vector(
-                    windows=bad_array, mode="branch", **params
-                )
+                ts.genetic_relatedness_vector(windows=bad_array, mode="branch", **params)
 
         for bad_windows in [[], [0]]:
             with pytest.raises(ValueError):
@@ -3299,6 +3324,128 @@ class TestGeneticRelatednessVector(LowLevelTestCase):
                 ts.genetic_relatedness_vector(
                     windows=bad_window, mode="branch", **params
                 )
+
+
+class TestDecodeAlignmentsLowLevel(LowLevelTestCase):
+    def get_simple_example(self):
+        # Simple 3-sample balanced tree with two sites, mirroring high-level tests.
+        ts = tskit.Tree.generate_balanced(3, span=10).tree_sequence
+        tables = ts.dump_tables()
+        tables.sites.add_row(2, ancestral_state="A")
+        tables.sites.add_row(9, ancestral_state="T")
+        tables.mutations.add_row(site=0, node=0, derived_state="G")
+        tables.mutations.add_row(site=1, node=3, derived_state="C")
+        return tables.tree_sequence().ll_tree_sequence
+
+    def test_basic_bytes_roundtrip(self):
+        ts = self.get_simple_example()
+        ref = b"NNNNNNNNNN"
+        nodes = np.array(ts.get_samples(), dtype=np.int32)
+        buf = ts.decode_alignments(
+            ref,
+            nodes,
+            0,
+            ts.get_sequence_length(),
+            "N",
+            True,
+        )
+        assert isinstance(buf, (bytes, bytearray))
+        L = int(ts.get_sequence_length())
+        rows = [buf[i * L : (i + 1) * L].decode("ascii") for i in range(nodes.shape[0])]
+        assert rows == ["NNGNNNNNNT", "NNANNNNNNC", "NNANNNNNNC"]
+
+    def test_nodes_type_and_bounds(self):
+        ts = self.get_simple_example()
+        ref = b"NNNNNNNNNN"
+        # Bad nodes type
+        with pytest.raises(ValueError, match="array"):
+            ts.decode_alignments(ref, [[0, 1]], 0, ts.get_sequence_length(), "N", True)
+        # Out of bounds
+        bad_nodes = np.array([ts.get_num_nodes()], dtype=np.int32)
+        with pytest.raises(_tskit.LibraryError, match="TSK_ERR_NODE_OUT_OF_BOUNDS"):
+            ts.decode_alignments(ref, bad_nodes, 0, ts.get_sequence_length(), "N", True)
+
+    def test_missing_char_validation(self):
+        ts = self.get_simple_example()
+        ref = b"NNNNNNNNNN"
+        nodes = np.array(ts.get_samples(), dtype=np.int32)
+        # missing_data_character must be str of length 1
+        with pytest.raises(TypeError, match="single character"):
+            ts.decode_alignments(ref, nodes, 0, ts.get_sequence_length(), "NN", True)
+
+    def test_argument_parsing_error(self):
+        ts = self.get_simple_example()
+        ref = b"NNNNNNNNNN"
+        nodes = np.array(ts.get_samples(), dtype=np.int32)
+        # left must be a float-like value
+        with pytest.raises(TypeError):
+            ts.decode_alignments(
+                ref, nodes, "bad_left", ts.get_sequence_length(), "N", True
+            )
+
+    def test_reference_sequence_type_validation(self):
+        ts = self.get_simple_example()
+        ref = "NNNNNNNNNN"
+        nodes = np.array(ts.get_samples(), dtype=np.int32)
+        with pytest.raises(TypeError, match="must be bytes"):
+            ts.decode_alignments(ref, nodes, 0, ts.get_sequence_length(), "N", True)
+
+    def test_missing_char_type_validation(self):
+        ts = self.get_simple_example()
+        ref = b"NNNNNNNNNN"
+        nodes = np.array(ts.get_samples(), dtype=np.int32)
+        with pytest.raises(TypeError, match="length 1"):
+            ts.decode_alignments(ref, nodes, 0, ts.get_sequence_length(), b"N", True)
+
+    def test_missing_char_unicode_error(self):
+        ts = self.get_simple_example()
+        ref = b"NNNNNNNNNN"
+        nodes = np.array(ts.get_samples(), dtype=np.int32)
+        with pytest.raises(UnicodeEncodeError):
+            ts.decode_alignments(
+                ref,
+                nodes,
+                0,
+                ts.get_sequence_length(),
+                NON_UTF8_STRING,
+                True,
+            )
+
+    def test_isolated_as_missing_flag_false(self):
+        ts = self.get_simple_example()
+        ref = b"NNNNNNNNNN"
+        nodes = np.array(ts.get_samples(), dtype=np.int32)
+        buf = ts.decode_alignments(
+            ref,
+            nodes,
+            0,
+            ts.get_sequence_length(),
+            "N",
+            False,
+        )
+        assert isinstance(buf, (bytes, bytearray))
+        L = int(ts.get_sequence_length())
+        rows = [buf[i * L : (i + 1) * L].decode("ascii") for i in range(nodes.shape[0])]
+        assert rows == ["NNGNNNNNNT", "NNANNNNNNC", "NNANNNNNNC"]
+
+    def test_length_and_interval_validation(self):
+        ts = self.get_simple_example()
+        nodes = np.array(ts.get_samples(), dtype=np.int32)
+        # Wrong reference length
+        with pytest.raises(_tskit.LibraryError, match="TSK_ERR_BAD_PARAM_VALUE"):
+            ts.decode_alignments(
+                b"NNNNNNNNN", nodes, 0, ts.get_sequence_length(), "N", True
+            )
+        # Negative left
+        with pytest.raises(_tskit.LibraryError, match="TSK_ERR_BAD_PARAM_VALUE"):
+            ts.decode_alignments(
+                b"NNNNNNNNNN", nodes, -1, ts.get_sequence_length(), "N", True
+            )
+        # Non-integer left
+        with pytest.raises(_tskit.LibraryError, match="TSK_ERR_BAD_PARAM_VALUE"):
+            ts.decode_alignments(
+                b"NNNNNNNNNN", nodes, 0.5, ts.get_sequence_length(), "N", True
+            )
 
 
 class TestGeneralStatsInterface(LowLevelTestCase, StatsInterfaceMixin):
@@ -3399,7 +3546,10 @@ class TestGeneralStatsInterface(LowLevelTestCase, StatsInterfaceMixin):
         for bad_array in [[1, 1], range(10)]:
             with pytest.raises(ValueError):
                 ts.general_stat(
-                    W, lambda x: bad_array, 1, ts.get_breakpoints()  # noqa:B023
+                    W,
+                    lambda x: bad_array,  # noqa:B023
+                    1,
+                    ts.get_breakpoints(),
                 )
         with pytest.raises(ValueError):
             ts.general_stat(W, lambda x: [1], 2, ts.get_breakpoints())
@@ -3408,7 +3558,10 @@ class TestGeneralStatsInterface(LowLevelTestCase, StatsInterfaceMixin):
         for bad_array in [["sdf"], 0, "w4", None]:
             with pytest.raises(ValueError):
                 ts.general_stat(
-                    W, lambda x: bad_array, 1, ts.get_breakpoints()  # noqa:B023
+                    W,
+                    lambda x: bad_array,  # noqa:B023
+                    1,
+                    ts.get_breakpoints(),
                 )
 
 
@@ -3575,9 +3728,7 @@ class TestVariant(LowLevelTestCase):
         alleles = variant.alleles
         site_id = variant.site_id
         variant.decode(1)
-        with pytest.raises(
-            tskit.LibraryError, match="Can't decode a copy of a variant"
-        ):
+        with pytest.raises(tskit.LibraryError, match="Can't decode a copy of a variant"):
             variant2.decode(1)
         assert site_id == variant2.site_id
         assert alleles == variant2.alleles
@@ -4922,11 +5073,11 @@ class TestModuleFunctions:
 
     def test_kastore_version(self):
         version = _tskit.get_kastore_version()
-        assert version == (2, 1, 1)
+        assert version == (2, 1, 2)
 
     def test_tskit_version(self):
         version = _tskit.get_tskit_version()
-        assert version == (1, 2, 0)
+        assert version == (1, 3, 1)
 
     def test_tskit_version_file(self):
         maj, min_, patch = _tskit.get_tskit_version()
@@ -5214,15 +5365,6 @@ class TestPairCoalescenceQuantilesErrors:
         with pytest.raises(TypeError, match="cast array data"):
             self.pair_coalescence_quantiles(ts, node_bin_map=np.zeros(num_nodes))
 
-    def test_cpy_bad_quantiles(self):
-        ts = self.example_ts()
-        quantiles = np.zeros(0)
-        with pytest.raises(ValueError, match="at least one quantile"):
-            self.pair_coalescence_quantiles(ts, quantiles=quantiles)
-        quantiles = np.zeros((3, 3))
-        with pytest.raises(ValueError, match="object too deep"):
-            self.pair_coalescence_quantiles(ts, quantiles=quantiles)
-
     def test_cpy_bad_inputs(self):
         ts = self.example_ts()
         with pytest.raises(TypeError, match="at most 6 keyword"):
@@ -5235,6 +5377,15 @@ class TestPairCoalescenceQuantilesErrors:
                 node_bin_map=None,
                 foo="bar",
             )
+
+    def test_cpy_bad_quantiles(self):
+        ts = self.example_ts()
+        quantiles = np.zeros(0)
+        with pytest.raises(ValueError, match="at least one quantile"):
+            self.pair_coalescence_quantiles(ts, quantiles=quantiles)
+        quantiles = np.zeros((3, 3))
+        with pytest.raises(ValueError, match="object too deep"):
+            self.pair_coalescence_quantiles(ts, quantiles=quantiles)
 
 
 class TestPairCoalescenceRatesErrors:

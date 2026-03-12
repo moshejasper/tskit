@@ -41,7 +41,7 @@ the C-equivalent methods as the Python API wraps this API.
 
 The main area of difference is, unlike the Python API, the C API doesn't do any
 decoding, encoding or schema validation of :ref:`sec_metadata` fields,
-instead only handling the byte sting representation of the metadata. Metadata is therefore
+instead only handling the byte string representation of the metadata. Metadata is therefore
 never used directly by any tskit C API method, just stored.
 
 ----------------------
@@ -620,6 +620,7 @@ Miscellaneous functions
 
 .. doxygenfunction:: tsk_is_unknown_time
 
+.. doxygenfunction:: tsk_json_struct_metadata_get_blob
 
 *************************
 Function Specific Options

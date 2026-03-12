@@ -8,7 +8,6 @@ import _tskit
 import tests.tsutil as tsutil
 import tskit
 
-
 pytestmark = pytest.mark.skipif(
     not getattr(_tskit, "HAS_NUMPY_2", False),
     reason="ImmutableTableCollection requires NumPy 2 runtime",
@@ -128,14 +127,33 @@ class TestCollectionParity:
         s = str(immutable)
         assert "ImmutableTableCollection" in s
 
+    def test_link_ancestors_parity(self, ts):
+        # Can't link ancestors when edges have metadata.
+        if ts.tables.edges.metadata_schema != tskit.MetadataSchema(schema=None):
+            pytest.skip("link_ancestors does not support edges with metadata")
+
+        mutable, immutable = get_mutable_and_immutable(ts)
+        samples = ts.samples()
+        if len(samples) == 0:
+            pytest.skip("Tree sequence has no samples")
+
+        ancestor_nodes = [u.id for u in ts.nodes() if not u.is_sample()]
+        if len(ancestor_nodes) == 0:
+            ancestor_nodes = list(samples)
+
+        samples = samples[: min(len(samples), 10)]
+        ancestors = ancestor_nodes[: min(len(ancestor_nodes), 10)]
+
+        mutable_result = mutable.link_ancestors(samples, ancestors)
+        immutable_result = immutable.link_ancestors(samples, ancestors)
+        assert mutable_result == immutable_result
+
 
 @pytest.mark.parametrize("ts", tsutil.get_example_tree_sequences())
 class TestTablesParity:
     def test_table_name_map_and_lengths(self, ts):
         mutable, immutable = get_mutable_and_immutable(ts)
-        assert set(mutable.table_name_map.keys()) == set(
-            immutable.table_name_map.keys()
-        )
+        assert set(mutable.table_name_map.keys()) == set(immutable.table_name_map.keys())
 
         for name in mutable.table_name_map.keys():
             mt = mutable.table_name_map[name]
@@ -439,9 +457,7 @@ class TestImmutableErrors:
         for _, itab in immutable.table_name_map.items():
             # Try setting a known column if any exist
             col_names = [
-                c
-                for c in getattr(itab, "column_names", [])
-                if not c.endswith("_schema")
+                c for c in getattr(itab, "column_names", []) if not c.endswith("_schema")
             ]
             if col_names:
                 col = col_names[0]
@@ -477,6 +493,11 @@ class TestMethodParity:
         for name in dir(tc):
             if name.startswith("_"):
                 continue
+            # Use getattr_static first so we don't trigger properties like
+            # the deprecated ``name_map`` attribute, which emits warnings.
+            attr = inspect.getattr_static(tc, name)
+            if isinstance(attr, property):
+                continue
             attr = getattr(tc, name)
             if inspect.ismethod(attr) and getattr(attr, "__self__", None) is tc:
                 tc_methods.append(name)
@@ -494,9 +515,9 @@ class TestMethodParity:
                 continue
             missing.append(name)
 
-        assert (
-            missing == []
-        ), f"ImmutableTableCollection missing non-mutator methods: {missing}"
+        assert missing == [], (
+            f"ImmutableTableCollection missing non-mutator methods: {missing}"
+        )
 
     def test_immutable_tables_have_method_or_mutator(self, ts_fixture):
         tc = ts_fixture.dump_tables()
@@ -527,9 +548,9 @@ class TestMethodParity:
                     continue
                 missing.append(name)
 
-            assert (
-                missing == []
-            ), f"Immutable {table_name} table missing non-mutator methods: {missing}"
+            assert missing == [], (
+                f"Immutable {table_name} table missing non-mutator methods: {missing}"
+            )
 
 
 class TestImmutableTimestampHandling:
@@ -543,9 +564,7 @@ class TestImmutableTimestampHandling:
 
         mutable_tables = ts.dump_tables()
         mutable_tables.provenances.clear()
-        mutable_tables.provenances.add_row(
-            record="{}", timestamp="2024-02-01T00:00:00Z"
-        )
+        mutable_tables.provenances.add_row(record="{}", timestamp="2024-02-01T00:00:00Z")
         mutable_prov = mutable_tables.provenances
 
         with pytest.raises(AssertionError, match="timestamp"):
@@ -568,9 +587,7 @@ class TestImmutableTimestampHandling:
         immutable = ts.tables
         mutable = ts.dump_tables()
         mutable.provenances.clear()
-        mutable.provenances.add_row(
-            record="different", timestamp="2024-02-01T00:00:00Z"
-        )
+        mutable.provenances.add_row(record="different", timestamp="2024-02-01T00:00:00Z")
 
         immutable_msg = re.escape(
             "ImmutableProvenanceTable row 0 differs:\n"

@@ -22,6 +22,7 @@
 """
 Module responsible for various utility functions used in other modules.
 """
+
 import dataclasses
 import datetime
 import html
@@ -31,7 +32,6 @@ import json
 import numbers
 import os
 import textwrap
-from typing import Union
 
 import numpy as np
 
@@ -86,9 +86,9 @@ def is_unknown_time(time):
     non-NAN value.
 
     :param time: Value or array to check.
-    :type time: Union[float, array-like]
+    :type time: float | array-like
     :return: A single boolean or array of booleans the same shape as ``time``.
-    :rtype: Union[bool, numpy.ndarray[bool]]
+    :rtype: bool | numpy.ndarray[bool]
     """
     return np.asarray(time, dtype=np.float64).view(np.uint64) == np.float64(
         UNKNOWN_TIME
@@ -395,7 +395,7 @@ def truncate_string_end(string, length):
     """
     if len(string) <= length:
         return string
-    return f"{string[:length - 3]}..."
+    return f"{string[: length - 3]}..."
 
 
 def render_metadata(md, length=40):
@@ -439,7 +439,7 @@ def unicode_table(
     inner_width = sum(widths) + len(header or rows[0]) - 1
     if title is not None:
         out += [
-            f"╔{'═' * inner_width}╗\n" f"║{title.ljust(inner_width)}║\n",
+            f"╔{'═' * inner_width}╗\n║{title.ljust(inner_width)}║\n",
             f"╠{'╤'.join('═' * w for w in widths)}╣\n",
         ]
     if header is not None:
@@ -542,8 +542,9 @@ def tree_sequence_html(ts):
                 <td>{format_number(table.num_rows)}</td>
                 <td>{naturalsize(table.nbytes)}</td>
                 <td style="text-align: center;">
-                    {'✅' if hasattr(table, "metadata") and len(table.metadata) > 0
-                     else ''}
+                    {
+            "✅" if hasattr(table, "metadata") and len(table.metadata) > 0 else ""
+        }
                 </td>
             </tr>
         """
@@ -666,7 +667,7 @@ def tree_sequence_html(ts):
                 To cite this software, please consult the citation manual: <a href="https://tskit.dev/citation/" target="_blank">https://tskit.dev/citation/</a>
             </div>
         </div>
-    """  # noqa: B950
+    """  # noqa: E501
 
 
 def tree_html(tree):
@@ -706,7 +707,7 @@ def tree_html(tree):
                 </div>
               </div>
             </div>
-            """  # noqa: B950
+            """  # noqa: E501
 
 
 def variant_html(variant):
@@ -743,7 +744,7 @@ def variant_html(variant):
                     </tr>
                     </thead>
                     <tbody>
-        """  # noqa: B950
+        """  # noqa: E501
 
     html_body_tail = """
                     </tbody>
@@ -754,8 +755,6 @@ def variant_html(variant):
         """
 
     try:
-        variant.site
-
         site_id = variant.site.id
         site_position = variant.site.position
         num_samples = len(variant.samples)
@@ -776,8 +775,9 @@ def variant_html(variant):
             """
             + "\n".join(
                 [
-                    f"""<tr><td>Nodes with Allele {'missing' if k is None
-                                                   else "'" + k + "'"}</td><td>"""
+                    f"""<tr><td>Nodes with Allele {
+                        "missing" if k is None else "'" + k + "'"
+                    }</td><td>"""
                     + f"{format_number(counts[k])}"
                     + " "
                     + f"({format_number(freqs[k] * 100, 2)}%)"
@@ -855,7 +855,7 @@ def truncate_rows(num_rows, limit=None):
     )
 
 
-def random_nucleotides(length: numbers.Number, *, seed: Union[int, None] = None) -> str:
+def random_nucleotides(length: numbers.Number, *, seed: int | None = None) -> str:
     """
     Returns a random string of nucleotides of the specified length. Characters
     are drawn uniformly from the alphabet "ACTG".

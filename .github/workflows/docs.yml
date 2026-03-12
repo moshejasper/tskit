@@ -6,9 +6,14 @@ on:
     branches: [main]
     tags:
       - '*'
+
+env:
+  FORCE_COLOR: 1
+
 jobs:
   Docs:
-    uses: tskit-dev/.github/.github/workflows/docs-build-template.yml@v1
+    uses: tskit-dev/.github/.github/workflows/docs.yml@v15
     with:
-      additional-setup: sudo apt-get install -y doxygen
-      make-command: make -C python
+      pyproject-directory: python
+      additional-apt-packages: doxygen
+      pre-build-command: cd docs/doxygen && doxygen
