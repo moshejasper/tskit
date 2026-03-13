@@ -1080,7 +1080,7 @@ tsk_treeseq_genealogical_nearest_neighbours_advanced(const tsk_treeseq_t *self,
     const tsk_id_t *focal, tsk_size_t num_focal, const tsk_id_t *const *reference_sets,
     const tsk_size_t *reference_set_size, tsk_size_t num_reference_sets,
     const uint32_t num_neighbours, const bool discrim, 
-    const uint8_t *treemask, tsk_size_t treemask_length, /* Parameter treemask_length not adequately implemented yet. */
+    const uint8_t *treemask, tsk_size_t treemask_length, 
     tsk_flags_t TSK_UNUSED(options), double *ret_array)
 {
     int ret = 0;
@@ -1110,7 +1110,7 @@ tsk_treeseq_genealogical_nearest_neighbours_advanced(const tsk_treeseq_t *self,
         = tsk_malloc(num_nodes * sizeof(*reference_set_map));
     uint32_t *restrict row = NULL;
     uint32_t *restrict child_row = NULL;
-    uint32_t total, delta;
+    uint32_t total, delta, matchcount;
 
     /* We support a max of 8K focal sets */
     if (num_reference_sets == 0 || num_reference_sets > (INT16_MAX - 1)) {
@@ -1124,7 +1124,11 @@ tsk_treeseq_genealogical_nearest_neighbours_advanced(const tsk_treeseq_t *self,
         goto out;
     }
     /* MAKE SURE TREEMASK OBJECT MATCHES IF BEING USED. */
-    if (treemask != NULL && treemask_length != num_nodes) {
+    if (treemask != NULL && treemask_length != num_trees) {
+        ret = tsk_trace_error(TSK_ERR_BAD_PARAM_VALUE);
+        goto out;
+    }
+    if (num_neighbours == 0) {
         ret = tsk_trace_error(TSK_ERR_BAD_PARAM_VALUE);
         goto out;
     }
@@ -1208,12 +1212,14 @@ tsk_treeseq_genealogical_nearest_neighbours_advanced(const tsk_treeseq_t *self,
         }
 
         tree_length = right - left;
+        /* Skip tree if treemask is in use and tree is masked. */
+        if (treemask != NULL && !treemask[tc]) {
+            left = right;
+            tc++;
+            continue;
+        }
         /* Process this tree */
         for (j = 0; j < num_focal; j++) {
-            /* Skip tree if treemask is in use and tree masked (i.e. False). */
-            if (treemask != NULL && !treemask[tc]) {
-                break;
-            }
             u = focal[j];
             focal_reference_set = reference_set_map[u];
             delta = focal_reference_set != -1;
@@ -1229,7 +1235,7 @@ tsk_treeseq_genealogical_nearest_neighbours_advanced(const tsk_treeseq_t *self,
             }
             if (p != TSK_NULL) {
                 /* Test whether more than one group is a match. Discard if so*/
-                int matchcount = 0;
+                matchcount = 0;
                 for (k = 0; k < K - 1; k++) {
                     if ((row[k] > 0 && focal_reference_set != k) || (row[k] > 1)) {
                         matchcount ++;
@@ -1238,10 +1244,7 @@ tsk_treeseq_genealogical_nearest_neighbours_advanced(const tsk_treeseq_t *self,
                         }
                     }
                 }
-                if (!discrim){
-                    matchcount = 1; /* ensure evaluation will proceed for multi-pops rather than being discarded if `discrim` is false*/
-                }
-                if (matchcount == 1) {
+                if ((!discrim && matchcount > 0) || matchcount == 1) {
                     length[j] += tree_length;
                     scale = tree_length / (total - delta);
                     A_row = GET_2D_ROW(ret_array, num_reference_sets, j);
