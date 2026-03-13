@@ -10567,7 +10567,14 @@ class TreeSequence:
                 arrays = pool.map(worker, splits)
             return np.vstack(list(arrays))
 
-    def genealogical_nearest_neighbours_advanced(self, focal, sample_sets, num_neighbours=1, discrim=False, num_threads=0):
+    def genealogical_nearest_neighbours_advanced(
+        self, 
+        focal, 
+        sample_sets, 
+        num_neighbours=1, 
+        discrim=False, 
+        treemask=None,
+        num_threads=0):
         """
         Return the genealogical nearest neighbours (GNN) (advanced) proportions for the given
         focal nodes, with reference to two or more sets of interest, averaged over all
@@ -10594,7 +10601,8 @@ class TreeSequence:
 
         For an precise mathematical definition of GNN, see https://doi.org/10.1101/458067
 
-        .. note:: The reference sets need not include all the samples, hence the most
+        .. note:: 
+            The reference sets need not include all the samples, hence the most
             recent common ancestral node of the reference sets, :math:`a`, need not be
             the immediate ancestor of the focal node. If the reference sets only comprise
             sequences from relatively distant individuals, the GNN statistic may end up
@@ -10609,6 +10617,7 @@ class TreeSequence:
         :param list sample_sets: A list of :math:`m` lists of node IDs.
         :param int num_neighbours: How many 'near neighbour' nodes must be found.
         :param bool discrim: If true, ignore trees with multiple subpops in neighbour match. 
+        :param bool treemask: A numpy boolean array masking trees for operation (1=use, 0=don't)
         :return: An :math:`n`  by :math:`m` array of focal nodes by GNN proportions.
             Every focal node corresponds to a row. The numbers in each
             row corresponding to the GNN proportion for each of the passed-in reference
@@ -10618,12 +10627,14 @@ class TreeSequence:
         # TODO add windows=None option: https://github.com/tskit-dev/tskit/issues/193
         if num_threads <= 0:
             return self._ll_tree_sequence.genealogical_nearest_neighbours_advanced(
-                focal, sample_sets, num_neighbours=num_neighbours, discrim=discrim
+                focal, sample_sets, num_neighbours=num_neighbours, discrim=discrim, 
+                treemask=treemask
             )
         else:
             worker = functools.partial(
                 self._ll_tree_sequence.genealogical_nearest_neighbours_advanced,
-                reference_sets=sample_sets, num_neighbours=num_neighbours, discrim=discrim
+                reference_sets=sample_sets, num_neighbours=num_neighbours, discrim=discrim, 
+                treemask=treemask
             )
             focal = util.safe_np_int_cast(focal, np.int32)
             splits = np.array_split(focal, num_threads)
